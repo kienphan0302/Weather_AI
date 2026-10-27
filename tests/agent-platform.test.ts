@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { Buffer } from 'node:buffer';
+import { createContext, runInContext } from 'node:vm';
 
 const { Store } = await import('../agent-platform/' + 'db.mjs');
 const { TaskQueue, orchestrate, runDirect } = await import('../agent-platform/' + 'orchestrator.mjs');
@@ -17,6 +18,88 @@ async function fixture(t: TestContext) {
   return root;
 }
 const pass = { status: 'PASS', validation: { tests: 'PASS', docker: 'SKIPPED' }, runDir: 'harness/runs/fake' };
+
+test('dashboard polls the latest valid completion, handles empty data and retains the value on failure', async () => {
+  const html = await readFile(new URL('../agent-platform/dashboard.html', import.meta.url), 'utf8');
+  assert.match(html, /<header>[\s\S]*Last completed task:[\s\S]*id="last-completed">None yet[\s\S]*<\/header>/);
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)![1];
+  const nodes = new Map();
+  const document = {
+    hidden: true,
+    activeElement: null,
+    addEventListener() {},
+    createElement: () => ({ dataset: {}, append() {}, addEventListener() {} }),
+    getElementById(id: string) {
+      if (!nodes.has(id)) nodes.set(id, { textContent: '', dataset: {}, contains: () => false, replaceChildren() {}, append() {}, addEventListener() {} });
+      return nodes.get(id);
+    },
+  };
+  let tasks: { status: string; updated_at?: unknown; prompt: string; id: string }[] = [];
+  let completedAt: string | null = null;
+  let fail = false;
+  let poll: () => Promise<void> = () => Promise.resolve();
+  const context = createContext({
+    document,
+    setInterval(callback: () => Promise<void>, interval: number) { assert.equal(interval, 5000); poll = callback; },
+    async fetch(path: string) {
+      if (fail) throw new Error('Offline');
+      return { ok: true, headers: { get: (name: string) => name === 'X-Last-Completed-At' ? completedAt : null }, json: async () => path === '/api/tasks' ? tasks : path === '/health' ? { status: 'ok' } : [] };
+    },
+  });
+  runInContext(script, context);
+  document.hidden = false;
+  const displayed = () => document.getElementById('last-completed').textContent;
+  const task = (status: string, updated_at?: unknown) => ({ status, updated_at, prompt: 'Fixture task', id: 'fixture' });
+  const first = Date.UTC(2026, 0, 1, 12);
+  const latest = first + 60_000;
+  tasks = [task('completed', latest), task('completed', first), ...['pending', 'running', 'failed'].map((status) => task(status, latest + 60_000))];
+  completedAt = String(latest);
+  await poll();
+  assert.equal(displayed(), new Date(latest).toLocaleString());
+  tasks.push(task('completed', latest + 120_000));
+  completedAt = String(latest + 120_000);
+  await poll();
+  assert.equal(displayed(), new Date(latest + 120_000).toLocaleString());
+  fail = true;
+  await poll();
+  assert.equal(displayed(), new Date(latest + 120_000).toLocaleString());
+  assert.match(document.getElementById('error').textContent, /Offline.*Retrying automatically/);
+  fail = false;
+  for (const value of [null, '', ' ', 'invalid', 'NaN', 'Infinity', '-Infinity', String(8.64e15 + 1)]) {
+    tasks = [];
+    completedAt = value;
+    await poll();
+    assert.equal(displayed(), 'None yet');
+    assert.equal(document.getElementById('error').textContent, '');
+  }
+  tasks = [task('completed', 0)];
+  completedAt = '0';
+  await poll();
+  assert.equal(displayed(), new Date(0).toLocaleString());
+  // A fresh page can show a completion outside the task list's 100-row window.
+  tasks = Array.from({ length: 100 }, () => task('pending', latest + 60_000));
+  completedAt = String(first);
+  await poll();
+  assert.equal(displayed(), new Date(first).toLocaleString());
+});
+
+test('dashboard completion metadata covers all persisted tasks without changing the recent list', () => {
+  const db = new Store(':memory:');
+  try {
+    assert.equal(db.lastCompletedAt(), null);
+    const older = db.addTask('Older completion', 'manual', 0);
+    const latest = db.addTask('Latest completion', 'manual', 1);
+    const finish = db.db.prepare("UPDATE tasks SET status='completed',updated_at=? WHERE id=?");
+    finish.run(2000, older.id);
+    finish.run(3000, latest.id);
+    for (let i = 0; i < 100; i++) db.addTask('Newer pending task', 'manual', i + 2);
+    assert.equal(db.tasks().length, 100);
+    assert.ok(db.tasks().every((row: { status: string }) => row.status === 'pending'));
+    assert.equal(db.lastCompletedAt(), 3000);
+    finish.run(4000, older.id);
+    assert.equal(db.lastCompletedAt(), 4000);
+  } finally { db.close(); }
+});
 
 test('SQLite persists tasks, recovers running tasks, resumes pending, and stores only structured safe memory', async (t) => {
   const path = join(await fixture(t), 'agent.db');
@@ -117,7 +200,7 @@ test('tool rejection is memoized and never reruns V2', async () => {
 });
 
 test('HTTP endpoints, responsive execution, strict bodies, loopback Host/Origin and security headers', async (t) => {
-  let app: { port: number; close(): Promise<void>; queue: { kick(): Promise<void> } } | undefined;
+  let app: { port: number; close(): Promise<void>; queue: { kick(): Promise<void> }; store: InstanceType<typeof Store> } | undefined;
   let release = () => {};
   t.after(async () => { release(); await app?.close(); });
   const root = await fixture(t);
@@ -165,6 +248,7 @@ test('HTTP endpoints, responsive execution, strict bodies, loopback Host/Origin 
   const script = html.match(/<script>([\s\S]*?)<\/script>/)![1];
   assert.ok(dashboard.headers.get('content-security-policy')?.includes(createHash('sha256').update(script).digest('base64')));
   for (const path of ['/api/tasks', '/api/schedules', '/api/memory']) assert.deepEqual(await (await call(path)).json(), []);
+  assert.equal((await call('/api/tasks')).headers.get('X-Last-Completed-At'), '');
   const response = await call('/api/tasks', { prompt: 'Improve weather cards' }); assert.equal(response.status, 201);
   const task = await response.json();
   assert.equal((await call('/health')).status, 200);
@@ -189,6 +273,13 @@ test('HTTP endpoints, responsive execution, strict bodies, loopback Host/Origin 
   assert.equal(hostile, 403);
   release(); await app.queue.kick();
   assert.equal((await (await call('/api/tasks/' + task.id)).json()).status, 'completed');
+  const completedAt = app.store.lastCompletedAt();
+  for (let i = 0; i < 100; i++) app.store.addTask('Newer pending task', 'manual', Date.now() + i + 1);
+  const recent = await call('/api/tasks');
+  assert.equal(recent.headers.get('X-Last-Completed-At'), String(completedAt));
+  const rows = await recent.json();
+  assert.equal(rows.length, 100);
+  assert.ok(rows.every((row: { status: string }) => row.status === 'pending'));
 });
 
 test('installed SDK exports support a regular Agent and strict empty function tool without network', async () => {

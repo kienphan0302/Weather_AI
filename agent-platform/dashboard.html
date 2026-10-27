@@ -8,7 +8,7 @@
 </style>
 </head>
 <body>
-<header><h1>Local Agent Platform</h1><p id="health" role="status">Checking health…</p></header>
+<header><div><h1>Local Agent Platform</h1><p class="muted"><small>Last completed task: <span id="last-completed">None yet</span></small></p></div><p id="health" role="status">Checking health…</p></header>
 <p class="muted">Coding tasks run serially in this repository. Review changes and reports before release. Schedules run while this server is open.</p>
 <p id="error" role="alert"></p>
 <main class="grid">
@@ -23,10 +23,11 @@
 const el = (id) => document.getElementById(id);
 let selected = null;
 let refreshing = false;
-async function api(path, body) {
+async function api(path, body, onResponse = () => {}) {
   const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed.');
+  onResponse(response);
   return data;
 }
 function list(id, rows, render, empty) {
@@ -53,12 +54,20 @@ async function updateOutput(id) {
   if (selected !== id) return;
   el('output').textContent = [task.prompt, 'Status: ' + task.status, task.error || '', task.result || 'No result yet.', task.report || ''].filter(Boolean).join('\n\n');
 }
+function lastCompletedTask(value) {
+  const timestamp = value === null || value.trim() === '' ? NaN : Number(value);
+  return Number.isFinite(timestamp) && !Number.isNaN(new Date(timestamp).getTime()) ? new Date(timestamp).toLocaleString() : 'None yet';
+}
 async function refresh() {
   if (refreshing || document.hidden) return;
   refreshing = true;
   try {
-    const [health, tasks, schedules, memory] = await Promise.all(['/health','/api/tasks','/api/schedules','/api/memory'].map((path) => api(path)));
+    let completedAt = null;
+    const [health, tasks, schedules, memory] = await Promise.all(['/health','/api/tasks','/api/schedules','/api/memory'].map((path) => api(path, undefined, (response) => {
+      if (path === '/api/tasks') completedAt = response.headers.get('X-Last-Completed-At');
+    })));
     el('health').textContent = 'Server: ' + health.status + (health.running ? ' · processing' : ' · idle');
+    el('last-completed').textContent = lastCompletedTask(completedAt);
     list('tasks', tasks, (li, task) => {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = task.status + ' · ' + task.prompt.slice(0, 120);

@@ -77,7 +77,11 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
           res.setHeader('Content-Security-Policy', SECURITY_POLICY.replace("script-src 'none'", `script-src 'sha256-${hash}'`));
           send(200, html, 'text/html; charset=utf-8');
         } else if (path === '/health') send(200, { status: queueError ? 'degraded' : 'ok', running: Boolean(queue.active) });
-        else if (path === '/api/tasks') send(200, store.tasks());
+        else if (path === '/api/tasks') {
+          // Dashboard metadata covers full history without changing the task list API.
+          res.setHeader('X-Last-Completed-At', String(store.lastCompletedAt() ?? ''));
+          send(200, store.tasks());
+        }
         else if (/^\/api\/tasks\/[\da-f-]{36}$/.test(path)) {
           const task = store.getTask(path.split('/').at(-1));
           if (!task) throw new HttpError(404, 'Task not found.');

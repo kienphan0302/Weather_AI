@@ -42,6 +42,9 @@ export class Store {
   }
   getTask(id) { return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id); }
   tasks() { return this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC,rowid DESC LIMIT 100').all(); }
+  lastCompletedAt() {
+    return this.db.prepare("SELECT MAX(updated_at) AS timestamp FROM tasks WHERE status='completed'").get().timestamp;
+  }
   nextTask() { return this.db.prepare("SELECT * FROM tasks WHERE status='pending' ORDER BY created_at,rowid LIMIT 1").get(); }
   claim(id) { return this.db.prepare("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='pending'").run(Date.now(), id).changes === 1; }
   finish(id, outcome) {
