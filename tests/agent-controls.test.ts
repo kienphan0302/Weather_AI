@@ -109,6 +109,93 @@ test('scheduler honors paused tasks and concurrency limit; paused pending work n
     assert.throws(() => new TaskQueue(store, undefined, { concurrency: 0 }));
   } finally { store.close(); }
 });
+function createV3Database(path: string) {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+      result TEXT, error TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE schedules (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, interval_minutes INTEGER NOT NULL CHECK(interval_minutes > 0),
+      next_run INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1))
+    );
+    CREATE TABLE memories (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), summary TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX task_status ON tasks(status,created_at);
+    CREATE UNIQUE INDEX one_active_schedule ON tasks(source)
+      WHERE source LIKE 'schedule:%' AND status IN ('pending','running');
+    INSERT INTO schedules VALUES ('enabled','Scheduled fixture',15,900000,1), ('disabled','Disabled fixture',30,1800000,0);
+    INSERT INTO tasks VALUES
+      ('completed','Completed fixture','completed','Stored result',NULL,'manual',100,200),
+      ('failed','Failed fixture','failed',NULL,'Stored error','manual',300,400),
+      ('pending','Pending fixture','pending',NULL,NULL,'schedule:enabled',500,600),
+      ('running','Running fixture','running',NULL,NULL,'manual',700,800);
+    INSERT INTO memories VALUES
+      ('memory-completed','completed','Historical summary',200),
+      ('memory-failed','failed','Historical failure',400);`);
+  } finally { db.close(); }
+}
+test('V3 migration preserves linked data and V4 schema across repeated opens', async (t) => {
+  const path = join(await fixture(t), 'v3.db');
+  createV3Database(path);
+  const legacy = new DatabaseSync(path);
+  const taskFields = 'id,prompt,status,result,error,source,created_at,updated_at';
+  const memoryFields = 'id,task_id,summary,created_at';
+  const readRows = (db: DatabaseSync) => ({
+    tasks: db.prepare(`SELECT ${taskFields} FROM tasks ORDER BY id`).all(),
+    schedules: db.prepare('SELECT * FROM schedules ORDER BY id').all(),
+    memories: db.prepare(`SELECT ${memoryFields} FROM memories ORDER BY id`).all(),
+  });
+  const original = readRows(legacy);
+  const foreignKeys = legacy.prepare('PRAGMA foreign_keys').get()?.foreign_keys;
+  legacy.close();
+  for (let open = 0; open < 2; open++) {
+    const store = new Store(path);
+    try {
+      assert.deepEqual(readRows(store.db), original);
+      const defaults = { attempt_count: 0, auto_retries: 0, next_attempt_at: 0, control: '', workspace: null, branch: null, base_branch: null, base_sha: null };
+      const columns = new Set(store.db.prepare('PRAGMA table_info(tasks)').all().map((row: { name: string }) => row.name));
+      for (const [name, value] of Object.entries(defaults)) {
+        assert.ok(columns.has(name), `Missing task column ${name}`);
+        for (const task of original.tasks) assert.equal(store.getTask(task.id)[name], value);
+      }
+      for (const table of ['attempts', 'events']) {
+        assert.ok(store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
+      }
+      assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(), []);
+      assert.equal(store.db.prepare('PRAGMA foreign_keys').get().foreign_keys, foreignKeys);
+      assert.equal(foreignKeys, 1);
+      assert.throws(() => store.db.prepare("DELETE FROM tasks WHERE id='completed'").run(), /FOREIGN KEY constraint failed/);
+      for (const memory of store.db.prepare('SELECT * FROM memories').all()) {
+        assert.equal(memory.kind, 'legacy');
+        assert.equal(memory.commit_sha, null);
+        assert.equal(memory.verification, 'unverified');
+      }
+      // Exercise the expanded status constraint without changing the fixture.
+      store.db.exec("BEGIN; UPDATE tasks SET status='paused' WHERE id='pending'; UPDATE tasks SET status='cancelled' WHERE id='pending'; ROLLBACK;");
+    } finally { store.close(); }
+  }
+});
+test('V3 migration rolls back schema and data when foreign-key integrity fails', async (t) => {
+  const path = join(await fixture(t), 'invalid-v3.db');
+  createV3Database(path);
+  const legacy = new DatabaseSync(path);
+  legacy.exec("PRAGMA foreign_keys=OFF; INSERT INTO memories VALUES ('orphan','missing','Orphan fixture',900);");
+  const schema = legacy.prepare("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all();
+  const rows = ['tasks', 'schedules', 'memories'].map((table) => legacy.prepare(`SELECT * FROM ${table} ORDER BY id`).all());
+  legacy.close();
+  for (let open = 0; open < 2; open++) {
+    assert.throws(() => new Store(path), /foreign-key integrity check/);
+    const db = new DatabaseSync(path);
+    try {
+      assert.deepEqual(db.prepare("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all(), schema);
+      assert.deepEqual(['tasks', 'schedules', 'memories'].map((table) => db.prepare(`SELECT * FROM ${table} ORDER BY id`).all()), rows);
+    } finally { db.close(); }
+  }
+});
 test('legacy migration preserves rows; historical/injected memory is unverified data and cannot unlock merge', async (t) => {
   const path = join(await fixture(t), 'fixture.db');
   const legacy = new DatabaseSync(path);

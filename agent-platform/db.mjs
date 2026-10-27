@@ -9,45 +9,63 @@ export class Store {
     checkNode();
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY, prompt TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
-        result TEXT, error TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS schedules (
-        id TEXT PRIMARY KEY, prompt TEXT NOT NULL, interval_minutes INTEGER NOT NULL CHECK(interval_minutes > 0),
-        next_run INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1))
-      );
-      CREATE TABLE IF NOT EXISTS memories (
-        id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), summary TEXT NOT NULL, created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS task_status ON tasks(status,created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS one_active_schedule ON tasks(source)
-        WHERE source LIKE 'schedule:%' AND status IN ('pending','running');`);
-    // Rebuild only the legacy task constraint, preserving every existing row.
-    if (!this.db.prepare("SELECT sql FROM sqlite_master WHERE name='tasks'").get().sql.includes("'paused'")) {
-      this.transaction(() => {
-        this.db.exec(`CREATE TABLE tasks_new (
-          id TEXT PRIMARY KEY, prompt TEXT NOT NULL,
-          status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed','paused','cancelled')),
-          result TEXT, error TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-        ); INSERT INTO tasks_new SELECT * FROM tasks; DROP TABLE tasks; ALTER TABLE tasks_new RENAME TO tasks;`);
-      });
+    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
+    const legacy = this.db.prepare("SELECT sql FROM sqlite_master WHERE name='tasks'").get();
+    const rebuild = legacy && !legacy.sql.includes("'paused'");
+    const foreignKeys = this.db.prepare('PRAGMA foreign_keys').get().foreign_keys;
+    try {
+      // SQLite requires enforcement to be disabled outside the rebuild transaction.
+      // Linked memories stay intact while their parent table is replaced atomically.
+      if (rebuild) this.db.exec('PRAGMA foreign_keys=OFF');
+      try {
+        this.transaction(() => {
+          this.db.exec(`CREATE TABLE IF NOT EXISTS tasks (
+              id TEXT PRIMARY KEY, prompt TEXT NOT NULL,
+              status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+              result TEXT, error TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS schedules (
+              id TEXT PRIMARY KEY, prompt TEXT NOT NULL, interval_minutes INTEGER NOT NULL CHECK(interval_minutes > 0),
+              next_run INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1))
+            );
+            CREATE TABLE IF NOT EXISTS memories (
+              id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), summary TEXT NOT NULL, created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS task_status ON tasks(status,created_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_schedule ON tasks(source)
+              WHERE source LIKE 'schedule:%' AND status IN ('pending','running');`);
+          // Rebuild only the legacy task constraint, preserving every existing row.
+          if (!this.db.prepare("SELECT sql FROM sqlite_master WHERE name='tasks'").get().sql.includes("'paused'")) {
+            this.db.exec(`CREATE TABLE tasks_new (
+                id TEXT PRIMARY KEY, prompt TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed','paused','cancelled')),
+                result TEXT, error TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+              ); INSERT INTO tasks_new SELECT * FROM tasks; DROP TABLE tasks; ALTER TABLE tasks_new RENAME TO tasks;`);
+          }
+          const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name));
+          for (const [name, type] of Object.entries({ attempt_count: 'INTEGER NOT NULL DEFAULT 0', auto_retries: 'INTEGER NOT NULL DEFAULT 0', next_attempt_at: 'INTEGER NOT NULL DEFAULT 0', control: "TEXT NOT NULL DEFAULT ''", workspace: 'TEXT', branch: 'TEXT', base_branch: 'TEXT', base_sha: 'TEXT' })) {
+            if (!columns.has(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+          }
+          const memoryColumns = new Set(this.db.prepare('PRAGMA table_info(memories)').all().map((row) => row.name));
+          for (const [name, type] of Object.entries({ kind: "TEXT NOT NULL DEFAULT 'legacy'", commit_sha: 'TEXT', verification: "TEXT NOT NULL DEFAULT 'unverified'" })) {
+            if (!memoryColumns.has(name)) this.db.exec(`ALTER TABLE memories ADD COLUMN ${name} ${type}`);
+          }
+          this.db.exec(`CREATE INDEX IF NOT EXISTS task_status ON tasks(status,created_at);
+            DROP INDEX IF EXISTS one_active_schedule;
+            CREATE UNIQUE INDEX one_active_schedule ON tasks(source) WHERE source LIKE 'schedule:%' AND status IN ('pending','running','paused');
+            CREATE TABLE IF NOT EXISTS attempts (task_id TEXT NOT NULL, number INTEGER NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, result TEXT, PRIMARY KEY(task_id,number));
+            CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, attempt INTEGER NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL);`);
+          if (rebuild && this.db.prepare('PRAGMA foreign_key_check').all().length) {
+            throw new Error('Legacy database migration failed foreign-key integrity check.');
+          }
+        });
+      } finally {
+        this.db.exec(`PRAGMA foreign_keys=${foreignKeys}`);
+      }
+    } catch (error) {
+      this.db.close();
+      throw error;
     }
-    const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name));
-    for (const [name, type] of Object.entries({ attempt_count: 'INTEGER NOT NULL DEFAULT 0', auto_retries: 'INTEGER NOT NULL DEFAULT 0', next_attempt_at: 'INTEGER NOT NULL DEFAULT 0', control: "TEXT NOT NULL DEFAULT ''", workspace: 'TEXT', branch: 'TEXT', base_branch: 'TEXT', base_sha: 'TEXT' })) {
-      if (!columns.has(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
-    }
-    const memoryColumns = new Set(this.db.prepare('PRAGMA table_info(memories)').all().map((row) => row.name));
-    for (const [name, type] of Object.entries({ kind: "TEXT NOT NULL DEFAULT 'legacy'", commit_sha: 'TEXT', verification: "TEXT NOT NULL DEFAULT 'unverified'" })) {
-      if (!memoryColumns.has(name)) this.db.exec(`ALTER TABLE memories ADD COLUMN ${name} ${type}`);
-    }
-    this.db.exec(`CREATE INDEX IF NOT EXISTS task_status ON tasks(status,created_at);
-      DROP INDEX IF EXISTS one_active_schedule;
-      CREATE UNIQUE INDEX one_active_schedule ON tasks(source) WHERE source LIKE 'schedule:%' AND status IN ('pending','running','paused');
-      CREATE TABLE IF NOT EXISTS attempts (task_id TEXT NOT NULL, number INTEGER NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, result TEXT, PRIMARY KEY(task_id,number));
-      CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, attempt INTEGER NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL);`);
   }
   transaction(work) {
     this.db.exec('BEGIN IMMEDIATE');
