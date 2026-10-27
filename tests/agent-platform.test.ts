@@ -17,7 +17,7 @@ async function fixture(t: TestContext) {
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
-const pass = { status: 'PASS', validation: { tests: 'PASS', docker: 'SKIPPED' }, runDir: 'harness/runs/fake' };
+const pass = { status: 'PASS', validation: { tests: 'PASS', review: 'PASS', docker: 'PASS' }, runDir: 'harness/runs/fake' };
 
 test('dashboard polls the latest valid completion, handles empty data and retains the value on failure', async () => {
   const html = await readFile(new URL('../agent-platform/dashboard.html', import.meta.url), 'utf8');
@@ -40,6 +40,7 @@ test('dashboard polls the latest valid completion, handles empty data and retain
   let poll: () => Promise<void> = () => Promise.resolve();
   const context = createContext({
     document,
+    EventSource: class { addEventListener() {} },
     setInterval(callback: () => Promise<void>, interval: number) { assert.equal(interval, 5000); poll = callback; },
     async fetch(path: string) {
       if (fail) throw new Error('Offline');
@@ -117,7 +118,8 @@ test('SQLite persists tasks, recovers running tasks, resumes pending, and stores
   const memory = db.memories();
   assert.equal(memory.length, 1);
   assert.doesNotMatch(JSON.stringify(memory), /private|secret|raw/);
-  assert.deepEqual(JSON.parse(memory[0].summary), { taskId: pending.id, status: 'completed', validation: pass.validation });
+  assert.equal(memory[0].kind, 'task_summary');
+  assert.equal(memory[0].verification, 'unverified');
   assert.match(db.memoryContext(), /completed/);
   db.addSchedule('Persisted schedule', 15);
   db.close(); db = new Store(path);
@@ -159,14 +161,18 @@ test('queue stays serial after a runner failure, recovers restart state, and pas
   await queue.stop();
 });
 
-test('direct orchestrator fixes executable, original argument, cwd and shell, trusts exit plus report', async () => {
+test('direct orchestrator passes the literal task, isolated cwd, memory and cancellation to V2', async () => {
   const prompt = 'Improve cards; $(echo literal)';
-  const result = await runDirect(prompt, { memory: '[safe]', runner: async (cmd: string, args: string[], options: { shell: boolean; cwd: string; env: Record<string, string> }) => {
-    assert.equal(cmd, process.execPath); assert.equal(args[1], prompt); assert.ok(args[0].endsWith('/scripts/agent-v2.mjs'));
-    assert.equal(options.shell, false); assert.equal(options.cwd, process.cwd()); assert.equal(options.env.AGENT_MEMORY_CONTEXT, '[safe]');
-    return { code: 1, stdout: JSON.stringify(pass) };
+  const signal = new AbortController().signal;
+  const workspace = { path: '/fixture/task', baseSha: 'a'.repeat(40) };
+  const result = await runDirect(prompt, { memory: '[safe]', signal, workspace, execute: async (task: string, options: { root: string; memory: string; signal: AbortSignal; checkpoint: boolean; baseSha: string }) => {
+    assert.equal(task, prompt); assert.equal(options.root, workspace.path);
+    assert.equal(options.memory, '[safe]'); assert.equal(options.signal, signal);
+    assert.equal(options.checkpoint, true); assert.equal(options.baseSha, workspace.baseSha);
+    return pass;
   } });
-  assert.equal(result.status, 'FAIL');
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.workspace, workspace.path);
 });
 for (const sdkThrows of [false, true]) {
   test(`SDK repeated concurrent tool calls delegate once, even when SDK later throws=${sdkThrows}`, async () => {
@@ -237,7 +243,7 @@ test('HTTP endpoints, responsive execution, strict bodies, loopback Host/Origin 
       }) as typeof fetch;
       return mock;
     };
-    app = await startServer({ ...options, serverFactory: factory });
+    app = await startServer({ ...options, serverFactory: factory, lock: async () => async () => {} });
   }
   assert.ok(app);
   const base = `http://127.0.0.1:${app.port}`;

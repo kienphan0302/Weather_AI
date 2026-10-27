@@ -24,3 +24,6 @@ coverage/
 
 # AI agent runtime reports
 harness/runs/
+
+# Isolated task checkouts and their independent dependencies
+.agent-worktrees/

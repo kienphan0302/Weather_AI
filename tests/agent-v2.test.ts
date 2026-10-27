@@ -14,14 +14,14 @@ async function fixture(t: TestContext) {
 function fake(root: string, options: { failStage?: string; failTest?: string; docker?: string } = {}) {
   const calls: Call[] = [];
   let stageIndex = 0;
-  const stages = ['planner', 'developer', 'code-review', 'security-review', 'ui-review', 'fixer'];
+  const stages = ['planner', 'developer', 'code-review', 'security-review', 'ui-review', 'fixer', 'final-code-review', 'final-security-review', 'final-ui-review'];
   const runner = async (command: string, args: string[], opts: Call['options']) => {
     calls.push({ command, args, options: opts });
     if (command === 'git') return { code: 0, stdout: args[0] === 'ls-files' ? 'existing.ts\0' : ' M existing.ts\n' };
     if (command === 'codex') {
       const stage = stages[stageIndex++];
       if (stage === 'developer') await writeFile(join(root, 'existing.ts'), 'edited');
-      return { code: options.failStage === stage ? 1 : 0, stdout: `${stage}-private-marker\n${stage === 'fixer' ? 'STATUS: PASS' : 'APPROVED'}` };
+      return { code: options.failStage === stage ? 1 : 0, stdout: `${stage}-private-marker\n${stage === 'fixer' || stage.startsWith('final-') ? 'STATUS: PASS' : 'APPROVED'}` };
     }
     if (command === 'npm') return { code: args.join(' ') === options.failTest ? 1 : 0, stdout: 'deterministic output' };
     return { code: options.docker === 'skip' || (options.docker === 'fail' && args[0] === 'build') ? 1 : 0, stdout: 'docker fixture' };
@@ -33,9 +33,11 @@ test('V2 stage order, sandboxes, independent reviews, reports and baseline attri
   const root = await fixture(t);
   const { runner, calls } = fake(root, { docker: 'skip' });
   const result = await v2.runV2('Improve weather accessibility', { root, runner });
-  assert.equal(result.status, 'PASS');
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.validation.docker, 'SKIPPED');
+  assert.equal(result.validation.review, 'PASS');
   const codex = calls.filter((c) => c.command === 'codex');
-  assert.deepEqual(codex.map((c) => c.args[2]), ['read-only', 'workspace-write', 'read-only', 'read-only', 'read-only', 'workspace-write']);
+  assert.deepEqual(codex.map((c) => c.args[2]), ['read-only', 'workspace-write', 'read-only', 'read-only', 'read-only', 'workspace-write', 'read-only', 'read-only', 'read-only']);
   assert.ok(calls.every((c) => c.options.cwd === root && c.options.shell === false));
   for (const review of codex.slice(2, 5)) {
     assert.doesNotMatch(review.args[3], /(?:code|security|ui)-review-private-marker/);
@@ -137,4 +139,16 @@ test('runner uses literal arguments, bounds timeouts, and captures spawn failure
   assert.notEqual((await v2.runCommand('definitely-missing-agent-command', [])).code, 0);
   const timeout = await v2.runCommand(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeoutMs: 30 });
   assert.notEqual(timeout.code, 0);
+});
+
+test('final reviews after fixer must explicitly approve; earlier review success is insufficient', async (t) => {
+  const root = await fixture(t);
+  const { runner } = fake(root);
+  const result = await v2.runV2('Fixture final review gate', { root, runner: async (command: string, args: string[], options: Call['options']) => {
+    const result = await runner(command, args, options);
+    if (command === 'codex' && args[3].includes('FINAL SECURITY REVIEW:')) return { code: 0, stdout: 'HIGH: unresolved finding.\nSTATUS: FAIL' };
+    return result;
+  } });
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.validation.review, 'FAIL');
 });

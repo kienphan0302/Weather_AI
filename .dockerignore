@@ -15,3 +15,6 @@ coverage
 .agent-data
 harness/runs
 .agent-test-*
+
+# Isolated task checkouts and their independent dependencies
+.agent-worktrees/

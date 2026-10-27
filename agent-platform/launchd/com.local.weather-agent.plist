@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.weather-agent</string>
+  <key>ProgramArguments</key>
+  <array><string>__NODE_ABSOLUTE_PATH__</string><string>__REPO_ABSOLUTE_PATH__/agent-platform/server.mjs</string></array>
+  <key>WorkingDirectory</key><string>__REPO_ABSOLUTE_PATH__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__CODEX_BIN_DIRECTORY__:__NODE_BIN_DIRECTORY__:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AGENT_PORT</key><string>8787</string>
+    <key>AGENT_CONCURRENCY</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>ExitTimeOut</key><integer>45</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>__REPO_ABSOLUTE_PATH__/.agent-data/server.stdout.log</string>
+  <key>StandardErrorPath</key><string>__REPO_ABSOLUTE_PATH__/.agent-data/server.stderr.log</string>
+</dict>
+</plist>

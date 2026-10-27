@@ -4,8 +4,10 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { REPO_ROOT, acquireLock, checkNode, redact } from '../scripts/agent-v2.mjs';
+import { REPO_ROOT, checkNode, redact } from '../scripts/agent-v2.mjs';
+import { acquireServerLock } from './server-lock.mjs';
 import { Store } from './db.mjs';
+import { mergeTask } from './merge.mjs';
 import { TaskQueue, orchestrate } from './orchestrator.mjs';
 
 const SECURITY_POLICY = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -39,14 +41,16 @@ async function jsonBody(req) {
   catch { throw new HttpError(400, 'Invalid JSON.'); }
 }
 
-export async function startServer({ port = 8787, dbPath, run = orchestrate, schedulerMs = 30_000, lockRoot = REPO_ROOT, serverFactory = createServer } = {}) {
+export async function startServer({ port = 8787, dbPath, run = orchestrate, schedulerMs = 30_000, lockRoot = REPO_ROOT, serverFactory = createServer, lock = acquireServerLock, concurrency = 1 } = {}) {
   checkNode();
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port.');
-  const release = await acquireLock(lockRoot, 'server.lock');
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new Error('Concurrency must be 1–4.');
+  const release = await lock(lockRoot);
   let store;
   try { store = new Store(dbPath); } catch (error) { await release(); throw error; }
-  const queue = new TaskQueue(store, run);
+  const queue = new TaskQueue(store, run, { concurrency });
   let queueError = false;
+  const streams = new Set();
   const pump = () => { void queue.kick().catch(() => { queueError = true; }); };
   const server = serverFactory(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -82,18 +86,49 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
           res.setHeader('X-Last-Completed-At', String(store.lastCompletedAt() ?? ''));
           send(200, store.tasks());
         }
+        else if (path === '/api/events') {
+          if (streams.size >= 8) throw new HttpError(429, 'Too many live log connections.');
+          const requested = req.headers['last-event-id'] ?? url.searchParams.get('cursor') ?? '0';
+          if (!/^\d{1,16}$/.test(String(requested)) || !Number.isSafeInteger(Number(requested))) throw new HttpError(400, 'Invalid event cursor.');
+          let cursor = Number(requested);
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+          req.socket?.setTimeout(0);
+          res.setTimeout?.(0);
+          streams.add(res);
+          const flush = () => {
+            const events = store.events(cursor);
+            if (events.length && events[0].seq > cursor + 1) {
+              if (!res.write('event: gap\ndata: {}\n\n')) { res.end(); return; }
+            }
+            for (const event of events) {
+              cursor = event.seq;
+              if (!res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`)) { res.end(); return; }
+            }
+          };
+          const timer = setInterval(flush, 500);
+          const heartbeat = setInterval(() => { if (!res.write(': heartbeat\n\n')) res.end(); }, 10000);
+          res.once('close', () => { clearInterval(timer); clearInterval(heartbeat); streams.delete(res); });
+          res.write(': connected\n\n');
+          flush();
+        }
         else if (/^\/api\/tasks\/[\da-f-]{36}$/.test(path)) {
           const task = store.getTask(path.split('/').at(-1));
           if (!task) throw new HttpError(404, 'Task not found.');
-          let report = '';
-          try {
-            const result = JSON.parse(task.result ?? '{}');
-            if (/^harness\/runs\/[\w.-]+$/.test(result.runDir)) report = (await readFile(join(REPO_ROOT, result.runDir, 'SUMMARY.md'), 'utf8')).slice(0, 200_000);
-          } catch { /* Pending or report unavailable. */ }
-          send(200, { ...task, report });
+          send(200, { ...task, events: store.events().filter((event) => event.task_id === task.id), attempts: store.db.prepare('SELECT * FROM attempts WHERE task_id=? ORDER BY number DESC LIMIT 20').all(task.id) });
         } else if (path === '/api/memory') send(200, store.memories());
         else if (path === '/api/schedules') send(200, store.schedules());
         else throw new HttpError(404, 'Not found.');
+      } else if (req.method === 'POST' && /^\/api\/tasks\/[a-f\d-]{36}\/(cancel|retry|pause|resume|merge)$/.test(path)) {
+        const body = await jsonBody(req);
+        keys(body, []);
+        const [, , , id, action] = path.split('/');
+        if (!store.getTask(id)) throw new HttpError(404, 'Task not found.');
+        try {
+          if (action === 'merge') {
+            const sha = await queue.merge(id, (task, currentTask) => mergeTask(task, { currentTask }));
+            send(200, { sha, status: 'merged' });
+          } else { const task = queue.control(id, action); pump(); send(200, task); }
+        } catch { throw new HttpError(409, 'Action blocked. Wait for the attempt to stop, or inspect workspace/base and validation before retrying.'); }
       } else if (req.method === 'POST' && ['/api/tasks', '/api/schedules'].includes(path)) {
         const body = await jsonBody(req);
         keys(body, path === '/api/tasks' ? ['prompt'] : ['prompt', 'intervalMinutes']);
@@ -130,6 +165,7 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
     close() {
       return closing ??= (async () => {
         clearInterval(timer);
+        for (const stream of streams) stream.end();
         const closed = new Promise((resolve) => server.close(resolve));
         await queue.stop();
         await closed;
@@ -144,8 +180,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const port = process.env.AGENT_PORT === undefined ? 8787 : Number(process.env.AGENT_PORT);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid AGENT_PORT.');
-    const app = await startServer({ port });
+    const app = await startServer({ port, concurrency: Number(process.env.AGENT_CONCURRENCY ?? 1) });
     console.log(`Local agent platform: http://127.0.0.1:${app.port}`);
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void app.close().catch(() => { process.exitCode = 1; }); });
-  } catch { console.error('Local platform could not start. Check Node 24, port and runtime lock.'); process.exitCode = 1; }
+  } catch { console.error('Local platform could not start. Check Node 24, port, concurrency and runtime lock.'); process.exitCode = 1; }
 }
