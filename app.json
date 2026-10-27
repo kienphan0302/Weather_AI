@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Weather",
+    "slug": "weather-agent",
+    "version": "0.1.0",
+    "scheme": "weatheragent",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.weatheragent"
+    },
+    "android": {
+      "package": "com.example.weatheragent"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Weather",
+      "shortName": "Weather",
+      "themeColor": "#225D50",
+      "backgroundColor": "#F4F6F5"
+    }
+  }
+}

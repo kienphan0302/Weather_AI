@@ -1,0 +1,12 @@
+node_modules
+.expo
+dist
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+ios
+android
+coverage
