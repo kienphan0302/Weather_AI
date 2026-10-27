@@ -10,3 +10,8 @@ dist
 ios
 android
 coverage
+
+# Local agent runtime, reports, and test fixtures never enter images.
+.agent-data
+harness/runs
+.agent-test-*

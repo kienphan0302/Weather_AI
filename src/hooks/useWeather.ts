@@ -6,7 +6,7 @@ import type { City, Weather } from '@/types/weather';
 
 type WeatherState = { key: string; attempt: number; weather: Weather | null; loading: boolean; error: string | null };
 
-export function useWeather(city: City) {
+export function useWeather(city: City, enabled = true) {
   const key = `${city.latitude},${city.longitude}`;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<WeatherState>({ key, attempt, weather: null, loading: true, error: null });
@@ -16,10 +16,12 @@ export function useWeather(city: City) {
   }
   const refresh = useCallback(() => setAttempt((value) => value + 1), []);
   useEffect(() => {
+    if (!enabled) return;
     const timer = setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, enabled]);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     const coordinates = { id: key, name: '', latitude: city.latitude, longitude: city.longitude };
     fetchWeather(coordinates, controller.signal).then(
@@ -31,7 +33,7 @@ export function useWeather(city: City) {
       },
     );
     return () => controller.abort();
-  }, [key, city.latitude, city.longitude, attempt]);
+  }, [key, city.latitude, city.longitude, attempt, enabled]);
   return {
     weather: state.key === key ? state.weather : null,
     loading: state.key !== key || state.loading,

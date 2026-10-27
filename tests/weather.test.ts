@@ -11,6 +11,7 @@ function fixture() {
   const hours = Array.from({ length: 168 }, (_, index) => now - 1800 - 5 * 3600 + index * 3600);
   return {
     timezone: 'Pacific/Honolulu',
+    utc_offset_seconds: -36000,
     current: { time: now, temperature_2m: 26.4, apparent_temperature: 28.7, relative_humidity_2m: 65, wind_speed_10m: 12.2, weather_code: 2, is_day: 1 },
     hourly: {
       time: hours,
@@ -133,9 +134,13 @@ test('trims and safely encodes city names; short queries do not request data', a
 
 test('HTTP failures provide actionable recovery messages', async (t) => {
   const mock = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 429 }));
-  await assert.rejects(fetchWeather(city), /wait a minute/);
+  const rateLimit = { message: 'Too many requests. Please wait a minute and try again.' };
+  await assert.rejects(fetchWeather(city), rateLimit);
+  await assert.rejects(searchCities('Honolulu'), rateLimit);
   mock.mock.mockImplementation(async () => new Response('', { status: 503 }));
-  await assert.rejects(fetchWeather(city), /temporarily unavailable/);
+  const unavailable = { message: 'The weather service is temporarily unavailable. Please try again.' };
+  await assert.rejects(fetchWeather(city), unavailable);
+  await assert.rejects(searchCities('Honolulu'), unavailable);
 });
 
 test('network failures and invalid JSON produce understandable errors', async (t) => {
@@ -143,6 +148,34 @@ test('network failures and invalid JSON produce understandable errors', async (t
   await assert.rejects(fetchWeather(city), /internet connection/);
   mock.mock.mockImplementation(async () => new Response('invalid json'));
   await assert.rejects(fetchWeather(city), /incomplete/);
+});
+
+test('unexpected fetch failures provide stable recovery guidance for forecasts and city search', async (t) => {
+  const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(fixture()));
+  for (const failure of [new Error('Internal transport details'), 'Internal transport details', null, undefined]) {
+    mock.mock.mockImplementation(async () => { throw failure; });
+    const expected = { message: 'The weather service is temporarily unavailable. Please try again.' };
+    await assert.rejects(fetchWeather(city), expected);
+    await assert.rejects(searchCities('Honolulu'), expected);
+  }
+});
+
+test('response body failures are normalized and subsequent requests can recover', async (t) => {
+  const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(fixture()));
+  for (const failure of [new Error('Internal stream details'), 'Internal stream details']) {
+    mock.mock.mockImplementation(async () => {
+      const response = Response.json(fixture());
+      t.mock.method(response, 'json', async () => { throw failure; });
+      return response;
+    });
+    const expected = { message: 'The weather service is temporarily unavailable. Please try again.' };
+    await assert.rejects(fetchWeather(city), expected);
+    await assert.rejects(searchCities('Honolulu'), expected);
+  }
+  mock.mock.mockImplementation(async () => Response.json(fixture()));
+  assert.equal((await fetchWeather(city)).temperature, 26.4);
+  mock.mock.mockImplementation(async () => Response.json({ results: [city] }));
+  assert.equal((await searchCities('Honolulu'))[0].name, 'Honolulu');
 });
 
 test('cancels superseded and already-aborted requests', async (t) => {
@@ -156,6 +189,20 @@ test('cancels superseded and already-aborted requests', async (t) => {
   controller.abort();
   await assert.rejects(pending, { name: 'AbortError' });
   await assert.rejects(fetchWeather(city, controller.signal), { name: 'AbortError' });
+});
+
+test('preserves caller cancellation while reading the response body', async (t) => {
+  const controller = new AbortController();
+  const reason = new Error('Caller canceled the request');
+  t.mock.method(globalThis, 'fetch', async () => {
+    const response = Response.json(fixture());
+    t.mock.method(response, 'json', async () => {
+      controller.abort();
+      throw reason;
+    });
+    return response;
+  });
+  await assert.rejects(fetchWeather(city, controller.signal), (error) => error === reason);
 });
 
 test('times out stalled requests without leaving an unbounded fetch', async (t) => {

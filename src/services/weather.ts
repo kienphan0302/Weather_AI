@@ -3,6 +3,7 @@ import type { City, Weather } from '../types/weather.ts';
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const SEARCH_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const INVALID_RESPONSE = 'Weather data is incomplete. Please try again shortly.';
+const SERVICE_UNAVAILABLE = 'The weather service is temporarily unavailable. Please try again.';
 
 type JsonObject = Record<string, unknown>;
 
@@ -132,24 +133,23 @@ async function request(url: string, signal?: AbortSignal): Promise<unknown> {
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) controller.abort();
   const timer = setTimeout(abort, 15000);
+  let response: Response;
   try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(response.status === 429
-        ? 'Too many requests. Please wait a minute and try again.'
-        : 'The weather service is temporarily unavailable. Please try again.');
-    }
-    return await response.json();
+    response = await fetch(url, { signal: controller.signal });
+    if (response.ok) return await response.json();
   } catch (error) {
     if (signal?.aborted) throw error;
     if (controller.signal.aborted) throw new Error('The request timed out. Check your connection and try again.');
     if (error instanceof TypeError) throw new Error('Unable to connect. Check your internet connection and try again.');
     if (error instanceof SyntaxError) throw new Error(INVALID_RESPONSE);
-    throw error;
+    throw new Error(SERVICE_UNAVAILABLE);
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
   }
+  throw new Error(response.status === 429
+    ? 'Too many requests. Please wait a minute and try again.'
+    : SERVICE_UNAVAILABLE);
 }
 
 export async function fetchWeather(city: City, signal?: AbortSignal): Promise<Weather> {

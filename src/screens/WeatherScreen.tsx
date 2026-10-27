@@ -16,8 +16,8 @@ export default function WeatherScreen() {
   const { width } = useWindowDimensions();
   const wide = width >= 900;
   const compact = width < 580;
-  const { city, selectCity, locate, locating, locationError } = useLocation();
-  const { weather, loading, error, refresh } = useWeather(city);
+  const { city, restored, selectCity, locate, locating, locationError } = useLocation();
+  const { weather, loading, error, refresh } = useWeather(city, restored);
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <Head><title>Weather — Your daily outlook</title><meta name="description" content="A clear view of your day. Current weather, hourly forecasts and a 7-day outlook for cities around the world." /></Head>
@@ -35,8 +35,8 @@ export default function WeatherScreen() {
           <View style={styles.heading}>
             <View style={styles.headingText}>
               <Text style={styles.eyebrow}>YOUR DAILY OUTLOOK</Text>
-              <Text accessibilityRole="header" style={[styles.cityTitle, compact && styles.cityTitleCompact]}>{city.name}</Text>
-              <Text style={styles.region}>{[city.region, city.country].filter(Boolean).join(', ') || `${city.latitude.toFixed(2)}°, ${city.longitude.toFixed(2)}°`}</Text>
+              <Text accessibilityRole="header" style={[styles.cityTitle, compact && styles.cityTitleCompact]}>{restored ? city.name : 'Loading city…'}</Text>
+              <Text style={styles.region}>{restored ? [city.region, city.country].filter(Boolean).join(', ') || `${city.latitude.toFixed(2)}°, ${city.longitude.toFixed(2)}°` : ' '}</Text>
             </View>
             <Button label={loading && weather ? 'Updating…' : '↻  Refresh'} accessibilityLabel="Refresh weather forecast" onPress={refresh} busy={loading} secondary />
           </View>

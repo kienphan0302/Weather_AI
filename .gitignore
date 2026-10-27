@@ -16,3 +16,11 @@ coverage/
 *.p8
 *.p12
 *.mobileprovision
+
+# Local agent platform runtime (never commit databases, locks or task data).
+.agent-data/*
+!.agent-data/.gitkeep
+.agent-test-*/
+
+# AI agent runtime reports
+harness/runs/

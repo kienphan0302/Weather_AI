@@ -161,3 +161,9 @@ registry updates). Live API access could not be verified from the restricted
 execution environment. Docker build/runtime verification requires a running
 Docker daemon; browser visual/accessibility checks and screenshots require a
 browser. These remain release smoke checks, rather than validated results here.
+
+## Local software factory
+
+V2 and the optional V3 dashboard run separately from Expo. See
+[agent-platform/README.md](agent-platform/README.md) for architecture, safety,
+configuration, validation, and commands. Use Node 24 and the existing dependencies.

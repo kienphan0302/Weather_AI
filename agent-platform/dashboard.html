@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Agent Platform</title>
+<style>
+:root{font:16px/1.5 system-ui,sans-serif;color:#e7edf7;background:#101827;color-scheme:dark}*{box-sizing:border-box}body{margin:0 auto;max-width:1200px;padding:24px}h1,h2{line-height:1.2}header{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}section{background:#1b273b;border:1px solid #41516d;border-radius:12px;padding:20px;min-width:0}label{display:block;margin:12px 0 6px}textarea,input,button{font:inherit}textarea,input{width:100%;padding:12px;border:1px solid #7c91b4;border-radius:6px;background:#111b2d}button{cursor:pointer;border:1px solid #a7c2ff;background:#b9d1ff;color:#10213f;padding:10px 16px;border-radius:6px;min-height:44px}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #ffce73;outline-offset:3px}ul{padding-left:20px}li{margin:10px 0;overflow-wrap:anywhere}li button{max-width:100%;text-align:left;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:600px;overflow:auto;background:#101827;padding:16px}.wide{grid-column:1/-1}#error{color:#ffd0cc;min-height:24px}.muted{color:#bac9e0}@media(max-width:700px){body{padding:12px}.grid{grid-template-columns:1fr}section{padding:16px}}
+</style>
+</head>
+<body>
+<header><h1>Local Agent Platform</h1><p id="health" role="status">Checking health…</p></header>
+<p class="muted">Coding tasks run serially in this repository. Review changes and reports before release. Schedules run while this server is open.</p>
+<p id="error" role="alert"></p>
+<main class="grid">
+<section><h2>Run a coding task</h2><form id="task-form"><label for="prompt">Task</label><textarea id="prompt" rows="5" minlength="3" maxlength="8000" required placeholder="Describe the change and acceptance criteria"></textarea><p><button type="submit">Run</button></p><p id="task-notice" role="status"></p></form></section>
+<section><h2>Tasks</h2><ul id="tasks" aria-live="polite"><li>Loading tasks…</li></ul></section>
+<section class="wide"><h2>Selected task output</h2><pre id="output" tabindex="0">Select a task to view its result and report.</pre></section>
+<section><h2>Schedules</h2><form id="schedule-form"><label for="schedule-prompt">Scheduled task</label><textarea id="schedule-prompt" rows="3" minlength="3" maxlength="8000" required></textarea><label for="interval">Interval in minutes</label><input id="interval" type="number" min="1" max="525600" step="1" value="60" required><p><button type="submit">Add schedule</button></p><p id="schedule-notice" role="status"></p></form><ul id="schedules"><li>Loading schedules…</li></ul></section>
+<section><h2>Recent memory</h2><p class="muted">Successful task IDs and validation results only.</p><ul id="memory"><li>Loading memory…</li></ul></section>
+</main>
+<script>
+'use strict';
+const el = (id) => document.getElementById(id);
+let selected = null;
+let refreshing = false;
+async function api(path, body) {
+  const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Request failed.');
+  return data;
+}
+function list(id, rows, render, empty) {
+  const parent = el(id);
+  const snapshot = JSON.stringify(rows);
+  if (parent.dataset.snapshot === snapshot) return;
+  parent.dataset.snapshot = snapshot;
+  const focusedTask = parent.contains(document.activeElement) ? document.activeElement.dataset.taskId : null;
+  parent.replaceChildren();
+  if (!rows.length) { const li = document.createElement('li'); li.textContent = empty; parent.append(li); }
+  for (const row of rows) { const li = document.createElement('li'); render(li, row); parent.append(li); }
+  if (focusedTask) {
+    const button = Array.from(parent.querySelectorAll('button')).find((item) => item.dataset.taskId === focusedTask);
+    button?.focus({ preventScroll: true });
+  }
+}
+async function showTask(id) {
+  selected = id;
+  el('output').textContent = 'Loading output…';
+  try { await updateOutput(id); } catch (error) { el('output').textContent = error.message; }
+}
+async function updateOutput(id) {
+  const task = await api('/api/tasks/' + encodeURIComponent(id));
+  if (selected !== id) return;
+  el('output').textContent = [task.prompt, 'Status: ' + task.status, task.error || '', task.result || 'No result yet.', task.report || ''].filter(Boolean).join('\n\n');
+}
+async function refresh() {
+  if (refreshing || document.hidden) return;
+  refreshing = true;
+  try {
+    const [health, tasks, schedules, memory] = await Promise.all(['/health','/api/tasks','/api/schedules','/api/memory'].map((path) => api(path)));
+    el('health').textContent = 'Server: ' + health.status + (health.running ? ' · processing' : ' · idle');
+    list('tasks', tasks, (li, task) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.textContent = task.status + ' · ' + task.prompt.slice(0, 120);
+      button.dataset.taskId = task.id;
+      button.addEventListener('click', () => showTask(task.id)); li.append(button);
+    }, 'No tasks yet.');
+    list('schedules', schedules, (li, row) => { li.textContent = row.prompt + ' · every ' + row.interval_minutes + ' min · ' + (row.enabled ? 'next ' + new Date(row.next_run).toLocaleString() : 'disabled'); }, 'No schedules yet.');
+    list('memory', memory, (li, row) => { li.textContent = row.summary; }, 'No successful tasks yet.');
+    if (selected) await updateOutput(selected);
+    el('error').textContent = '';
+  } catch (error) { el('health').textContent = 'Server unavailable'; el('error').textContent = error.message + ' Retrying automatically.'; }
+  finally { refreshing = false; }
+}
+for (const [id, path, body, notice] of [
+  ['task-form', '/api/tasks', () => ({ prompt: el('prompt').value }), 'task-notice'],
+  ['schedule-form', '/api/schedules', () => ({ prompt: el('schedule-prompt').value, intervalMinutes: Number(el('interval').value) }), 'schedule-notice'],
+]) {
+  el(id).addEventListener('submit', async (event) => {
+    event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
+    el(notice).textContent = 'Submitting…';
+    try { const row = await api(path, body()); el(notice).textContent = 'Saved.'; if (id === 'task-form') await showTask(row.id); await refresh(); }
+    catch (error) { el(notice).textContent = 'Could not save: ' + error.message; }
+    finally { button.disabled = false; }
+  });
+}
+void refresh();
+setInterval(refresh, 5000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+</script>
+</body>
+</html>
