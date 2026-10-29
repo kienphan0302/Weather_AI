@@ -69,8 +69,8 @@ against a malicious local task. Avoid simultaneous external Git edits during mer
    diff. Check the displayed task, attempt, base SHA and checkpoint SHA.
 2. Click **Approve checkpoint** to approve that displayed identity. Approval does
    not merge the task; a retry requires fresh approval.
-3. After tests (test, lint, typecheck and build), final automated reviews and Docker
-   all pass for that same checkpoint, explicitly select **merge** in the dashboard.
+3. After current tests (test, lint, typecheck and build), final automated reviews and
+   Docker all pass for that same checkpoint, explicitly select **merge** in the dashboard.
    Merging remains a manual action and requires a clean, unchanged primary checkout.
 
 ## V5.1 Visual Code Review Center
