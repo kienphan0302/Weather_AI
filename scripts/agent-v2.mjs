@@ -166,7 +166,10 @@ export async function runV2(task, { root = REPO_ROOT, runner = runCommand, signa
     }
     await Promise.all(['code-review', 'security-review', 'ui-review'].map(save));
     if (reviewFailed) throw new Error('Review stage failed.');
-    const fixes = await codex('fixer', `FIXER: Evaluate ALL independent reviews. Apply valid fixes only within the original task. Explain rejected findings with evidence; list applied fixes and remaining risks. Optionally include one line MEMORY_JSON: {\"decisions\":[],\"projectFacts\":[],\"summary\":\"...\"} containing concise historical data only. End with STATUS: PASS only if no valid findings remain unresolved, otherwise STATUS: FAIL.\n${reviews.map((r, i) => `Review ${i + 1}:\n${r}`).join('\n\n')}`, true);
+    const fixes = await codex('fixer', `FIXER: Evaluate ALL independent reviews. Apply valid fixes only within the original task. Explain rejected findings with evidence; list applied fixes and remaining risks.
+Validation belongs to the later deterministic Tester and DevOps stages. Do not run npm test, npm run lint, npm run typecheck, npm run build, or Docker in the Fixer stage. The workflow separately verifies their actual PASS/FAIL after the checkpoint.
+Unavailable validation tooling or Docker socket access in the Fixer sandbox is not an unresolved source-level finding. Do not claim validation passed, and do not mark the Fixer FAIL merely because those checks cannot run here. If reviews identify no valid findings, leave the code unchanged.
+Do not quote earlier reviewers' STATUS verdicts in your answer. Optionally include one line MEMORY_JSON: {\"decisions\":[],\"projectFacts\":[],\"summary\":\"...\"} containing concise historical data only. End with STATUS: PASS only if no valid findings remain unresolved, otherwise STATUS: FAIL.\n${reviews.map((r, i) => `Review ${i + 1}:\n${r}`).join('\n\n')}`, true);
     try {
       const rawMemory = fixes.match(/^MEMORY_JSON: (.+)$/m)?.[1] ?? '{}';
       memoryData = rawMemory.length <= 32768 ? sanitizeMemory(JSON.parse(rawMemory)) : {};
