@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const { git, prepareWorkspace } = await import('../agent-platform/' + 'workspaces.mjs');
+const { reviewIdentity } = await import('../agent-platform/' + 'review.mjs');
 const { mergeTask } = await import('../agent-platform/' + 'merge.mjs');
 const { runCommand, runV2 } = await import('../scripts/' + 'agent-v2.mjs');
 // Commits exist only inside disposable nested Git fixtures, never in the working repository.
@@ -30,8 +31,9 @@ async function checkpoint(workspace: { path: string }, text = 'task\n') {
   await git(workspace.path, ['add', '--all']); await git(workspace.path, ['commit', '-m', 'Update fixture']);
   return git(workspace.path, ['rev-parse', 'HEAD']);
 }
-function task(workspace: { path: string; baseSha: string; baseBranch: string }, sha: string) {
-  return { status: 'completed', workspace: workspace.path, base_sha: workspace.baseSha, base_branch: workspace.baseBranch, result: JSON.stringify({ status: 'PASS', sha, validation: { tests: 'PASS', review: 'PASS', docker: 'PASS' } }) };
+function task(workspace: { path: string; baseSha: string; baseBranch: string; branch: string }, sha: string) {
+  const value = { id: workspace.branch.replace('agent/task-', ''), attempt_count: 1, branch: workspace.branch, status: 'completed', workspace: workspace.path, base_sha: workspace.baseSha, base_branch: workspace.baseBranch, result: JSON.stringify({ status: 'PASS', sha, validation: { tests: 'PASS', review: 'PASS', docker: 'PASS' } }) };
+  return { ...value, human_review: JSON.stringify({ decision: 'approve', identity: reviewIdentity(value) }) };
 }
 test('task checkout preserves primary dirty changes and has independent dependency files and symlinks', async (t) => {
   const { root, workspace } = await fixture(t);

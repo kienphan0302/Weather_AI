@@ -1,3 +1,4 @@
+import { reviewIdentity, sameIdentity } from './review.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -43,7 +44,7 @@ export class Store {
               ); INSERT INTO tasks_new SELECT * FROM tasks; DROP TABLE tasks; ALTER TABLE tasks_new RENAME TO tasks;`);
           }
           const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name));
-          for (const [name, type] of Object.entries({ attempt_count: 'INTEGER NOT NULL DEFAULT 0', auto_retries: 'INTEGER NOT NULL DEFAULT 0', next_attempt_at: 'INTEGER NOT NULL DEFAULT 0', control: "TEXT NOT NULL DEFAULT ''", workspace: 'TEXT', branch: 'TEXT', base_branch: 'TEXT', base_sha: 'TEXT' })) {
+          for (const [name, type] of Object.entries({ attempt_count: 'INTEGER NOT NULL DEFAULT 0', auto_retries: 'INTEGER NOT NULL DEFAULT 0', next_attempt_at: 'INTEGER NOT NULL DEFAULT 0', control: "TEXT NOT NULL DEFAULT ''", workspace: 'TEXT', branch: 'TEXT', base_branch: 'TEXT', base_sha: 'TEXT', human_review: 'TEXT' })) {
             if (!columns.has(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
           }
           const memoryColumns = new Set(this.db.prepare('PRAGMA table_info(memories)').all().map((row) => row.name));
@@ -85,12 +86,22 @@ export class Store {
     return this.getTask(id);
   }
   getTask(id) { return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id); }
+  decideReview(id, decision, identity, now = Date.now()) {
+    if (!['approve', 'reject'].includes(decision)) throw new Error('Invalid review decision.');
+    return this.transaction(() => {
+      const task = this.getTask(id);
+      if (task?.status !== 'completed' || !sameIdentity(identity, reviewIdentity(task))) throw new Error('Review snapshot changed. Reload the diff.');
+      const review = { decision, identity: reviewIdentity(task), decidedAt: now };
+      this.db.prepare('UPDATE tasks SET human_review=? WHERE id=?').run(JSON.stringify(review), id);
+      return review;
+    });
+  }
   tasks() { return this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC,rowid DESC LIMIT 100').all(); }
   lastCompletedAt() { return this.db.prepare("SELECT MAX(updated_at) AS timestamp FROM tasks WHERE status='completed'").get().timestamp; }
   nextTask(now = Date.now()) { return this.db.prepare("SELECT * FROM tasks WHERE status='pending' AND next_attempt_at<=? ORDER BY created_at,rowid LIMIT 1").get(now); }
   claim(id, now = Date.now()) {
     return this.transaction(() => {
-      const changed = this.db.prepare("UPDATE tasks SET status='running',attempt_count=attempt_count+1,result=NULL,error=NULL,updated_at=? WHERE id=? AND status='pending' AND next_attempt_at<=?").run(now, id, now).changes;
+      const changed = this.db.prepare("UPDATE tasks SET status='running',attempt_count=attempt_count+1,result=NULL,human_review=NULL,error=NULL,updated_at=? WHERE id=? AND status='pending' AND next_attempt_at<=?").run(now, id, now).changes;
       if (!changed) return false;
       const task = this.getTask(id);
       this.db.prepare("INSERT INTO attempts (task_id,number,status,started_at) VALUES (?,?,'running',?)").run(id, task.attempt_count, now);
@@ -113,7 +124,7 @@ export class Store {
     else if (action === 'resume' && status === 'running' && ['pause','paused'].includes(control)) control = '';
     else if (action === 'retry' && ['failed', 'cancelled', 'completed'].includes(status)) { status = 'pending'; control = ''; }
     else throw new Error('Action is unavailable until the current attempt stops.');
-    this.db.prepare('UPDATE tasks SET status=?,control=?,result=NULL,error=NULL,next_attempt_at=?,auto_retries=?,updated_at=? WHERE id=?')
+    this.db.prepare('UPDATE tasks SET status=?,control=?,result=NULL,human_review=NULL,error=NULL,next_attempt_at=?,auto_retries=?,updated_at=? WHERE id=?')
       .run(status, control, action === 'retry' ? 0 : task.next_attempt_at, action === 'retry' ? 0 : task.auto_retries, Date.now(), id);
     return this.getTask(id);
   }

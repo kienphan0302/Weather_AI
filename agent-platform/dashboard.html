@@ -4,17 +4,17 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Local Agent Platform</title>
 <style>
-:root{font:16px/1.5 system-ui,sans-serif;color:#e7edf7;background:#101827;color-scheme:dark}*{box-sizing:border-box}body{margin:0 auto;max-width:1200px;padding:24px}h1,h2{line-height:1.2}header{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}section{background:#1b273b;border:1px solid #41516d;border-radius:12px;padding:20px;min-width:0}label{display:block;margin:12px 0 6px}textarea,input,button{font:inherit}textarea,input{width:100%;padding:12px;border:1px solid #7c91b4;border-radius:6px;background:#111b2d}button{cursor:pointer;border:1px solid #a7c2ff;background:#b9d1ff;color:#10213f;padding:10px 16px;border-radius:6px;min-height:44px}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #ffce73;outline-offset:3px}ul{padding-left:20px}li{margin:10px 0;overflow-wrap:anywhere}li button{max-width:100%;text-align:left;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:600px;overflow:auto;background:#101827;padding:16px}.wide{grid-column:1/-1}#error{color:#ffd0cc;min-height:24px}.muted{color:#bac9e0}@media(max-width:700px){body{padding:12px}.grid{grid-template-columns:1fr}section{padding:16px}}
+:root{font:16px/1.5 system-ui,sans-serif;color:#e7edf7;background:#101827;color-scheme:dark}*{box-sizing:border-box}body{margin:0 auto;max-width:1200px;padding:24px}h1,h2{line-height:1.2}header{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}section{background:#1b273b;border:1px solid #41516d;border-radius:12px;padding:20px;min-width:0}label{display:block;margin:12px 0 6px}textarea,input,button{font:inherit}textarea,input{width:100%;padding:12px;border:1px solid #7c91b4;border-radius:6px;background:#111b2d}button{cursor:pointer;border:1px solid #a7c2ff;background:#b9d1ff;color:#10213f;padding:10px 16px;border-radius:6px;min-height:44px}button:disabled{opacity:.6;cursor:wait}pre:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #ffce73;outline-offset:3px}ul{padding-left:20px}li{margin:10px 0;overflow-wrap:anywhere}li button{max-width:100%;text-align:left;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:600px;overflow:auto;background:#101827;padding:16px}dt{font-weight:700}dd{margin:0 0 10px;overflow-wrap:anywhere}#controls,#review-controls{display:flex;gap:10px;flex-wrap:wrap}#diff{white-space:pre;overflow-wrap:normal;max-height:520px}#diff:empty{display:none}.wide{grid-column:1/-1}#error{color:#ffd0cc;min-height:24px}.muted{color:#bac9e0}@media(max-width:700px){body{padding:12px}.grid{grid-template-columns:1fr}section{padding:16px}}
 </style>
 </head>
 <body>
 <header><div><h1>Local Agent Platform</h1><p class="muted"><small>Last completed task: <span id="last-completed">None yet</span></small></p></div><p id="health" role="status">Checking health…</p></header>
-<p class="muted">Coding tasks run in isolated branches. Merge requires tests, final reviews and Docker PASS. Schedules run while this server is open.</p>
+<p class="muted">Coding tasks run in isolated branches. Merge requires tests, final reviews, Docker PASS and current human approval. Schedules run while this server is open.</p>
 <p id="error" role="alert"></p>
 <main class="grid">
 <section><h2>Run a coding task</h2><form id="task-form"><label for="prompt">Task</label><textarea id="prompt" rows="5" minlength="3" maxlength="8000" required placeholder="Describe the change and acceptance criteria"></textarea><p><button type="submit">Run</button></p><p id="task-notice" role="status"></p></form></section>
 <section><h2>Tasks</h2><ul id="tasks" aria-live="polite"><li>Loading tasks…</li></ul></section>
-<section class="wide"><h2>Selected task output</h2><div id="controls"></div><pre id="output" tabindex="0">Select a task to view its result and report.</pre><h3>Live activity</h3><p id="stream-status" role="status">Connecting…</p><pre id="live-log" tabindex="0" aria-label="Live task activity"></pre></section>
+<section class="wide"><h2>Visual Code Review Center</h2><div id="controls" aria-label="Task controls"></div><p id="review-status" role="status">Select a task to review.</p><dl id="details"></dl><h3>Task prompt</h3><pre id="output" tabindex="0">Select a task to view its details.</pre><h3>Validation</h3><ul id="validation"></ul><h3>Attempt history</h3><ul id="attempts"></ul><h3>Read-only Git diff</h3><p id="diff-status" role="status"></p><pre id="diff" tabindex="0" aria-label="Committed Git diff">Select a task.</pre><div id="review-controls" aria-label="Human review controls"></div><h3>Live activity</h3><p id="stream-status" role="status">Connecting…</p><pre id="live-log" tabindex="0" aria-label="Live task activity"></pre></section>
 <section><h2>Schedules</h2><form id="schedule-form"><label for="schedule-prompt">Scheduled task</label><textarea id="schedule-prompt" rows="3" minlength="3" maxlength="8000" required></textarea><label for="interval">Interval in minutes</label><input id="interval" type="number" min="1" max="525600" step="1" value="60" required><p><button type="submit">Add schedule</button></p><p id="schedule-notice" role="status"></p></form><ul id="schedules"><li>Loading schedules…</li></ul></section>
 <section><h2>Recent memory</h2><p class="muted">Untrusted decisions, project facts and task summaries; never proof of current validation.</p><ul id="memory"><li>Loading memory…</li></ul></section>
 </main>
@@ -23,6 +23,7 @@
 const el = (id) => document.getElementById(id);
 let selected = null;
 let refreshing = false;
+let outputRequest = 0;
 async function api(path, body, onResponse = () => {}) {
   const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await response.json();
@@ -48,15 +49,82 @@ async function showTask(id) {
   selected = id;
   el('controls').replaceChildren();
   delete el('controls').dataset.snapshot;
+  outputRequest++;
+  el('review-controls').replaceChildren(); delete el('review-controls').dataset.snapshot;
+  el('details').replaceChildren();
+  el('validation').replaceChildren();
+  el('attempts').replaceChildren();
+  el('review-status').textContent = 'Loading task…';
+  el('diff-status').textContent = 'Loading diff…';
+  el('diff').textContent = '';
   el('output').textContent = 'Loading output…';
-  try { await updateOutput(id); } catch (error) { if (selected === id) el('output').textContent = error.message; }
+  try { await updateOutput(id); } catch { /* The current request renders its own error. */ }
 }
 async function updateOutput(id) {
-  const task = await api('/api/tasks/' + encodeURIComponent(id));
-  if (selected !== id) return;
-  el('output').textContent = [task.prompt, 'Status: ' + task.status + (task.control ? ' · ' + (task.control === 'pause' ? 'waiting for stage to pause' : task.control) : ''), 'Attempt: ' + task.attempt_count, task.branch || '', task.next_attempt_at ? 'Next attempt: ' + new Date(task.next_attempt_at).toLocaleString() : '', task.error || '', task.result || 'No result yet.'].filter(Boolean).join('\n\n');
+  const request = ++outputRequest;
+  let task, diff;
+  try {
+    task = await api('/api/tasks/' + encodeURIComponent(id));
+    if (selected !== id || request !== outputRequest) return;
+    try { diff = await api('/api/tasks/' + encodeURIComponent(id) + '/diff'); }
+    catch (error) { diff = { state: 'error', identity: null, text: '', message: error.message + ' Select the task to reload; automatic refresh will retry.' }; }
+  } catch (error) {
+    if (selected === id && request === outputRequest) {
+      el('controls').replaceChildren(); delete el('controls').dataset.snapshot;
+      el('review-controls').replaceChildren(); delete el('review-controls').dataset.snapshot;
+      el('diff').textContent = '';
+      el('diff-status').textContent = 'Unavailable. Reload by selecting the task; automatic refresh will retry.';
+      el('review-status').textContent = 'Review unavailable: ' + error.message;
+      el('output').textContent = 'Task could not be loaded. Select it again to retry.';
+    }
+    throw error;
+  }
+  if (selected !== id || request !== outputRequest) return;
+  let result = {}, review = null;
+  try { result = JSON.parse(task.result || '{}') || {}; } catch { /* Missing result. */ }
+  try { review = JSON.parse(task.human_review || 'null'); } catch { /* Legacy review. */ }
+  const identity = diff.identity;
+  const matches = identity && identity.taskId === task.id && identity.attempt === task.attempt_count && identity.baseSha === task.base_sha && identity.checkpointSha === result.sha;
+  const currentDecision = matches && review?.identity && ['taskId','attempt','baseSha','checkpointSha'].every((key) => review.identity[key] === identity[key]);
+  const approved = currentDecision && review.decision === 'approve';
+  el('output').textContent = task.prompt;
+  el('details').replaceChildren();
+  for (const [label, value] of Object.entries({Status: task.status, 'Execution gate': result.status || 'Unavailable', 'Human review': review?.decision || 'Pending', 'Review time': review?.decidedAt ? new Date(review.decidedAt).toLocaleString() : null, Control: task.control || 'None', Attempt: task.attempt_count, Source: task.source,
+    Branch: task.branch, 'Base branch': task.base_branch, 'Base SHA': task.base_sha, 'Checkpoint SHA': result.sha,
+    Created: task.created_at ? new Date(task.created_at).toLocaleString() : null, Updated: task.updated_at ? new Date(task.updated_at).toLocaleString() : null,
+    'Next attempt': task.next_attempt_at ? new Date(task.next_attempt_at).toLocaleString() : null, Error: task.error})) {
+    const term = document.createElement('dt'), description = document.createElement('dd');
+    term.textContent = label; description.textContent = String(value ?? 'Unavailable'); el('details').append(term); el('details').append(description);
+  }
+  list('validation', ['tests','review','docker'].map((key) => ({ key, value: result.validation?.[key] || 'SKIPPED' })), (li, row) => { li.textContent = row.key + ': ' + row.value; }, 'No validation yet.');
+  list('attempts', task.attempts || [], (li, attempt) => { li.textContent = 'Attempt ' + attempt.number + ': ' + attempt.status + ' · started ' + new Date(attempt.started_at).toLocaleString() + (attempt.finished_at ? ' · finished ' + new Date(attempt.finished_at).toLocaleString() : ''); }, 'No attempts yet.');
+  el('diff-status').textContent = matches || !identity ? diff.state + ' · ' + diff.message + (diff.binary ? ' Binary changes have no textual preview.' : '') : 'Snapshot changed. Reload before reviewing.';
+  el('diff').textContent = matches ? diff.text : '';
+  el('review-status').textContent = approved ? 'Approved for this checkpoint. Merge remains a separate explicit action.' : currentDecision && review.decision === 'reject' ? 'Rejected. Merge blocked; retry to revise or explicitly approve this checkpoint.' : 'Merge blocked until this checkpoint receives human approval and all validation gates PASS.';
+  const reviewControls = el('review-controls');
+  const reviewSnapshot = JSON.stringify([task.id, task.status, identity, review, diff.state]);
+  if (reviewControls.dataset.snapshot !== reviewSnapshot) {
+    const focused = reviewControls.contains(document.activeElement) ? document.activeElement.dataset.action : null;
+    reviewControls.replaceChildren(); reviewControls.dataset.snapshot = reviewSnapshot;
+    if (matches && task.status === 'completed' && ['ready','empty'].includes(diff.state)) {
+      for (const action of ['approve', 'reject']) {
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.action = action;
+        button.textContent = action === 'approve' ? 'Approve checkpoint' : 'Reject checkpoint';
+        button.addEventListener('click', async () => {
+          for (const item of reviewControls.querySelectorAll('button')) item.disabled = true;
+          try {
+            await api('/api/tasks/' + task.id + '/' + action, { identity });
+            if (selected === task.id) await updateOutput(task.id);
+          } catch (error) { el('error').textContent = error.message; }
+          finally { for (const item of reviewControls.querySelectorAll('button')) item.disabled = false; }
+        });
+        reviewControls.append(button);
+      }
+    }
+    if (focused) Array.from(reviewControls.querySelectorAll('button')).find((button) => button.dataset.action === focused)?.focus({ preventScroll: true });
+  }
   const controls = el('controls');
-  const snapshot = JSON.stringify([task.id, task.status, task.control, task.result]);
+  const snapshot = JSON.stringify([task.id, task.status, task.control, task.result, approved]);
   if (controls.dataset.snapshot === snapshot) return;
   controls.dataset.snapshot = snapshot;
   const focusedAction = controls.contains(document.activeElement) ? document.activeElement.dataset.action : null;
@@ -65,8 +133,7 @@ async function updateOutput(id) {
   if (['pending','running'].includes(task.status) && !task.control) actions.push('pause');
   if (task.status === 'paused' || ['pause','paused'].includes(task.control)) actions.push('resume');
   if (['failed','cancelled','completed'].includes(task.status)) actions.push('retry');
-  let result = {}; try { result = JSON.parse(task.result || '{}'); } catch { /* Missing result. */ }
-  if (task.status === 'completed' && result.sha && ['tests','review','docker'].every((key) => result.validation?.[key] === 'PASS')) actions.push('merge');
+  if (task.status === 'completed' && approved && result.status === 'PASS' && result.sha && ['tests','review','docker'].every((key) => result.validation?.[key] === 'PASS')) actions.push('merge');
   for (const button of controls.querySelectorAll('button')) {
     if (!actions.includes(button.dataset.action)) button.remove();
   }

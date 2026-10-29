@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { REPO_ROOT, checkNode, redact } from '../scripts/agent-v2.mjs';
 import { acquireServerLock } from './server-lock.mjs';
 import { Store } from './db.mjs';
+import { inspectDiff } from './review.mjs';
 import { mergeTask } from './merge.mjs';
 import { TaskQueue, orchestrate } from './orchestrator.mjs';
 
@@ -111,6 +112,11 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
           res.write(': connected\n\n');
           flush();
         }
+        else if (/^\/api\/tasks\/[\da-f-]{36}\/diff$/.test(path)) {
+          const task = store.getTask(path.split('/')[3]);
+          if (!task) throw new HttpError(404, 'Task not found.');
+          send(200, await inspectDiff(task, { root: lockRoot }));
+        }
         else if (/^\/api\/tasks\/[\da-f-]{36}$/.test(path)) {
           const task = store.getTask(path.split('/').at(-1));
           if (!task) throw new HttpError(404, 'Task not found.');
@@ -118,6 +124,20 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
         } else if (path === '/api/memory') send(200, store.memories());
         else if (path === '/api/schedules') send(200, store.schedules());
         else throw new HttpError(404, 'Not found.');
+      } else if (req.method === 'POST' && /^\/api\/tasks\/[a-f\d-]{36}\/(approve|reject)$/.test(path)) {
+        const body = await jsonBody(req);
+        keys(body, ['identity']);
+        keys(body.identity, ['taskId', 'attempt', 'baseSha', 'checkpointSha']);
+        const [, , , id, decision] = path.split('/');
+        if (!store.getTask(id)) throw new HttpError(404, 'Task not found.');
+        try {
+          const review = await queue.review(id, async (task) => {
+            const diff = await inspectDiff(task, { root: lockRoot });
+            if (!diff.identity) throw new Error('Diff unavailable.');
+            return store.decideReview(id, decision, body.identity);
+          });
+          send(200, review);
+        } catch { throw new HttpError(409, 'Review blocked: checkpoint changed, task busy or diff unavailable. Reload the task and diff.'); }
       } else if (req.method === 'POST' && /^\/api\/tasks\/[a-f\d-]{36}\/(cancel|retry|pause|resume|merge)$/.test(path)) {
         const body = await jsonBody(req);
         keys(body, []);
@@ -125,7 +145,7 @@ export async function startServer({ port = 8787, dbPath, run = orchestrate, sche
         if (!store.getTask(id)) throw new HttpError(404, 'Task not found.');
         try {
           if (action === 'merge') {
-            const sha = await queue.merge(id, (task, currentTask) => mergeTask(task, { currentTask }));
+            const sha = await queue.merge(id, (task, currentTask) => mergeTask(task, { root: lockRoot, currentTask }));
             send(200, { sha, status: 'merged' });
           } else { const task = queue.control(id, action); pump(); send(200, task); }
         } catch { throw new HttpError(409, 'Action blocked. Wait for the attempt to stop, or inspect workspace/base and validation before retrying.'); }

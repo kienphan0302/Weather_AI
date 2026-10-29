@@ -50,7 +50,7 @@ validation. Codex stages themselves are instructed not to commit. A task-specifi
 image tag uses the checkpoint SHA. Reports stay under the task's `harness/runs/`.
 
 Merge is explicit through the dashboard button or `POST /api/tasks/:id/merge` with `{}`.
-Every gate must be PASS on the same SHA: tests (all four commands), final reviews and
+A current, explicit human approval is also required. Every execution gate must be PASS on the same SHA: tests (all four commands), final reviews and
 Docker. Missing results, SKIPPED Docker, an altered task SHA or any uncommitted task
 source block merging. Legacy historical results and memories cannot satisfy a gate.
 Git metadata operations and merges are serialized. The primary branch must be unchanged
@@ -62,6 +62,44 @@ a changed base requires a clean task workspace. Conflicts stop and remain for ma
 inspection. No automatic conflict resolution, branch deletion, reset or cleanup occurs.
 Git metadata is shared between worktrees; this is workflow isolation, not isolation
 against a malicious local task. Avoid simultaneous external Git edits during merging.
+
+## V5.1 Visual Code Review Center
+
+The selected-task panel shows the prompt, status, attempt history, branch/base/checkpoint
+identity, timestamps, validation flags and recovery guidance. The committed diff is
+read-only, with explicit loading, empty, unavailable, binary and oversized states.
+Selecting a task, viewing its diff, Approve and Reject never enqueue work or merge.
+Merge remains a separate explicit action.
+
+`GET /api/tasks/:id/diff` compares the recorded base SHA to the checkpoint SHA only
+after checking the canonical task worktree path, repository, branch, HEAD, ancestry
+and clean task checkout. Git runs with fixed arguments, no shell/external diff/textconv,
+a 10-second timeout and a 256 KiB output limit. Output is rendered as text, control
+characters are stripped and known credentials are redacted. Private/runtime paths,
+dependencies, generated output, `.env*`, `*.pem` and `*.key` are excluded at every depth
+before generating the diff. Excluded changes are not visible in this review; binary
+changes show Git's marker and submodules show their commit IDs, without file contents.
+Oversized output is withheld entirely and cannot be approved through this API.
+Unknown secrets in ordinary source cannot reliably be identified automatically.
+
+`POST /api/tasks/:id/approve` and `/reject` accept only:
+
+```json
+{"identity":{"taskId":"<uuid>","attempt":1,"baseSha":"<40 hex>","checkpointSha":"<40 hex>"}}
+```
+
+Use the identity returned with the displayed diff. Decisions persist separately from
+execution results in an additive SQLite column. They apply only to that task, attempt,
+base and checkpoint; stale/busy/unavailable reviews return 409. Decisions may be changed
+explicitly for the same checkpoint. Reject blocks merge without canceling or retrying a
+task. Retry/claim clear prior review; legacy tasks require fresh approval. Human approval
+does not replace tests, final automated reviews or Docker validation.
+
+Review, Retry and Merge exclude each other for the same task during asynchronous work.
+Merge rechecks the current decision, attempt and workspace before its final Git command,
+while retaining the existing clean-target, unchanged-base and fast-forward checks.
+Git locks serialize merges across tasks. External Git edits remain outside this local
+service's coordination; avoid them during review and merge.
 
 ## Attempts, controls and scheduler
 
@@ -166,7 +204,7 @@ Codex authentication and health behavior require a smoke test on the target Mac.
 ## API and validation
 
 GET `/`, `/health`, `/api/tasks`, `/api/tasks/:id` (metadata, attempts, bounded events),
-`/api/events`, `/api/memory`, `/api/schedules`.
+`/api/tasks/:id/diff`, `/api/events`, `/api/memory`, `/api/schedules`.
 POST `/api/tasks` accepts only `{ "prompt": "coding task" }`.
 POST `/api/schedules` accepts only `{ "prompt": "coding task", "intervalMinutes": 60 }`.
 POST `/api/tasks/:id/{cancel,retry,pause,resume,merge}` accepts only `{}`; invalid state

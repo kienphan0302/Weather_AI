@@ -117,6 +117,12 @@ export class TaskQueue {
     if (action === 'resume') entry?.resume?.();
     return task;
   }
+  async review(id, work) {
+    if (this.merging.has(id) || this.running.has(id)) throw new Error('Task is busy.');
+    this.merging.add(id);
+    try { return await work(this.store.getTask(id)); }
+    finally { this.merging.delete(id); }
+  }
   async merge(id, merge) {
     if (this.merging.has(id) || this.running.has(id)) throw new Error('Task is busy.');
     this.merging.add(id);

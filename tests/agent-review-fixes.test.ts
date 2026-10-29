@@ -8,6 +8,7 @@ import { createContext, runInContext } from 'node:vm';
 
 const { Store } = await import('../agent-platform/' + 'db.mjs');
 const { TaskQueue } = await import('../agent-platform/' + 'orchestrator.mjs');
+const { reviewIdentity } = await import('../agent-platform/' + 'review.mjs');
 const { mergeTask } = await import('../agent-platform/' + 'merge.mjs');
 const { acquireServerLock } = await import('../agent-platform/' + 'server-lock.mjs');
 const { runV2, sanitizeMemory } = await import('../scripts/' + 'agent-v2.mjs');
@@ -52,8 +53,9 @@ test('merge rechecks attempt after awaited Git checks before executing merge', a
   const root = await mkdtemp(join(process.cwd(), '.agent-test-review-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const sha = 'a'.repeat(40), base = 'b'.repeat(40);
-  const task = { status: 'completed', attempt_count: 1, workspace: root, base_branch: 'main', base_sha: base,
+  const value = { id: '00000000-0000-0000-0000-000000000001', status: 'completed', attempt_count: 1, workspace: root, base_branch: 'main', base_sha: base,
     result: JSON.stringify({ status: 'PASS', sha, validation: { tests: 'PASS', review: 'PASS', docker: 'PASS' } }) };
+  const task = { ...value, human_review: JSON.stringify({ decision: 'approve', identity: reviewIdentity(value) }) };
   let current = task;
   let merged = false, revs = 0;
   await assert.rejects(mergeTask(task, { root, currentTask: () => current,
