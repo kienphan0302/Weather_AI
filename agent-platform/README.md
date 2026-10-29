@@ -63,6 +63,16 @@ inspection. No automatic conflict resolution, branch deletion, reset or cleanup 
 Git metadata is shared between worktrees; this is workflow isolation, not isolation
 against a malicious local task. Avoid simultaneous external Git edits during merging.
 
+## Visual Review Workflow
+
+1. Select a completed task in the dashboard and inspect its read-only committed Git
+   diff. Check the displayed task, attempt, base SHA and checkpoint SHA.
+2. Click **Approve checkpoint** to approve that displayed identity. Approval does
+   not merge the task; a retry requires fresh approval.
+3. After tests (test, lint, typecheck and build), final automated reviews and Docker
+   all pass for that same checkpoint, explicitly select **merge** in the dashboard.
+   Merging remains a manual action and requires a clean, unchanged primary checkout.
+
 ## V5.1 Visual Code Review Center
 
 The selected-task panel shows the prompt, status, attempt history, branch/base/checkpoint
