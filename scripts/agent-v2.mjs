@@ -153,7 +153,7 @@ export async function runV2(task, { root = REPO_ROOT, runner = runCommand, signa
     }
     const plan = await codex('planner', 'PLANNER: Read the repository, do not edit. Produce the smallest plan, acceptance criteria, affected files, architecture and risks.');
     await codex('developer', `DEVELOPER: Implement ONLY the requested task using the plan. Preserve existing work. Report files, behavior and risks. Deterministic validation runs later.\nPlan:\n${plan}`, true);
-    const reviewBase = 'Inspect repository and git diff, including preexisting changes as context; attribute findings carefully. Read-only static inspection ONLY: do not run npm tests, lint, typecheck, Expo build, Docker, or commands that create or modify files. The deterministic Tester and DevOps stages run those checks separately; inability to run them in the read-only reviewer sandbox is NOT a code finding. Report concrete source-level issues with file/line and severities CRITICAL, HIGH, MEDIUM, LOW, or APPROVED. Do not edit, read other reviews or run reports.';
+    const reviewBase = 'Inspect repository and git diff, including preexisting changes as context; attribute findings carefully. Read-only static inspection ONLY: do not run npm tests, lint, typecheck, Expo build, Docker, or commands that create or modify files. The deterministic Tester and DevOps stages run those checks separately; inability to run them in the read-only reviewer sandbox is NOT a code finding. Report concrete source-level issues with file/line and severities CRITICAL, HIGH, MEDIUM, LOW, or APPROVED. Do not edit files. Do not read other reviews or run reports.';
     const reviews = [];
     let reviewFailed = false;
     for (const [stage, focus] of [
