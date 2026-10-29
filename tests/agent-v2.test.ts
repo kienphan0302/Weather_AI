@@ -46,6 +46,9 @@ test('V2 stage order, sandboxes, independent reviews, reports and baseline attri
   assert.match(codex[5].args[3], /code-review-private-marker/);
   assert.match(codex[5].args[3], /security-review-private-marker/);
   assert.match(codex[5].args[3], /ui-review-private-marker/);
+  assert.match(codex[5].args[3], /Do not run npm test, npm run lint, npm run typecheck, npm run build, or Docker/i);
+  assert.match(codex[5].args[3], /deterministic Tester and DevOps stages/);
+  assert.match(codex[5].args[3], /not an unresolved source-level finding/i);
   for (const review of [...codex.slice(2, 5), ...codex.slice(6, 9)]) {
     assert.match(review.args[3], /do not run npm tests, lint, typecheck, Expo build, Docker/i);
     assert.match(review.args[3], /Tester and DevOps stages/i);
@@ -77,6 +80,25 @@ test('final read-only review does not replace deterministic validation gates', a
   assert.equal(result.status, 'PASS');
   assert.equal(calls.filter((call) => call.command === 'npm').length, 4);
   assert.equal(calls.filter((call) => call.command === 'docker').length, 2);
+});
+
+test('unresolved Fixer findings still block a task when tests, final reviews and Docker all pass', async (t) => {
+  const root = await fixture(t);
+  const { runner } = fake(root);
+  const result = await v2.runV2('Update documentation', {
+    root,
+    runner: async (command: string, args: string[], options: Call['options']) => {
+      const output = await runner(command, args, options);
+      if (command === 'codex' && args[3].includes('FIXER:')) {
+        return { code: 0, stdout: 'A concrete review finding remains unresolved.\nSTATUS: FAIL' };
+      }
+      return output;
+    },
+  });
+  assert.equal(result.validation.tests, 'PASS');
+  assert.equal(result.validation.docker, 'PASS');
+  assert.equal(result.validation.review, 'PASS');
+  assert.equal(result.status, 'FAIL');
 });
 
 for (const failStage of ['planner', 'developer']) {
