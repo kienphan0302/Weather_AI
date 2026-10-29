@@ -69,7 +69,8 @@ against a malicious local task. Avoid simultaneous external Git edits during mer
    diff against the task requirements. Check the displayed task, attempt, base SHA
    and checkpoint SHA.
 2. When satisfied with the changes, click **Approve checkpoint** to approve that
-   displayed identity. Approval does not merge the task; a retry requires fresh approval.
+   displayed task, attempt, base SHA and checkpoint SHA. Approval does not merge the
+   task; a retry requires fresh approval.
 3. After `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, final automated
    reviews and Docker all pass for that same checkpoint, explicitly select **merge**
    in the dashboard.
