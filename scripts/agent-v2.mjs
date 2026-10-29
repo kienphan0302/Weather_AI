@@ -153,7 +153,7 @@ export async function runV2(task, { root = REPO_ROOT, runner = runCommand, signa
     }
     const plan = await codex('planner', 'PLANNER: Read the repository, do not edit. Produce the smallest plan, acceptance criteria, affected files, architecture and risks.');
     await codex('developer', `DEVELOPER: Implement ONLY the requested task using the plan. Preserve existing work. Report files, behavior and risks. Deterministic validation runs later.\nPlan:\n${plan}`, true);
-    const reviewBase = 'Inspect repository and git diff, including preexisting changes as context; attribute findings carefully. Do not edit. Return evidence with file/line and severities CRITICAL, HIGH, MEDIUM, LOW, or APPROVED. Do not read other reviews or run reports.';
+    const reviewBase = 'Inspect repository and git diff, including preexisting changes as context; attribute findings carefully. Read-only static inspection ONLY: do not run npm tests, lint, typecheck, Expo build, Docker, or commands that create or modify files. The deterministic Tester and DevOps stages run those checks separately; inability to run them in the read-only reviewer sandbox is NOT a code finding. Report concrete source-level issues with file/line and severities CRITICAL, HIGH, MEDIUM, LOW, or APPROVED. Do not edit, read other reviews or run reports.';
     const reviews = [];
     let reviewFailed = false;
     for (const [stage, focus] of [
@@ -184,7 +184,7 @@ export async function runV2(task, { root = REPO_ROOT, runner = runCommand, signa
     // The fixer can change code: reviews before it are not evidence for the final commit.
     const finalReviews = [];
     for (const focus of ['code', 'security', 'ui']) {
-      const text = await codex(`final-${focus}-review`, `FINAL ${focus.toUpperCase()} REVIEW: Inspect the final repository state${sha ? ` at commit ${sha}` : ''}. Read-only. Do not read other reviews or reports. Report concrete unresolved findings. End with STATUS: PASS only if no findings remain, otherwise STATUS: FAIL.`);
+      const text = await codex(`final-${focus}-review`, `FINAL ${focus.toUpperCase()} REVIEW: Inspect the final repository state${sha ? ` at commit ${sha}` : ''}. Read-only STATIC review. Do not run npm tests, lint, typecheck, Expo build, Docker, or commands that create or modify files. The separate deterministic Tester and DevOps stages execute those checks after final reviews, and their actual PASS/FAIL is enforced by the workflow gate. Do NOT report an inability to execute tests, build or Docker from this read-only sandbox as a code/UI/security defect, and do not claim those checks have passed. Do not read other reviews or reports. Report only concrete unresolved source-level findings, with file/line evidence. End with STATUS: PASS only if no concrete findings remain, otherwise STATUS: FAIL.`);
       finalReviews.push(text.trim().split('\n').at(-1) === 'STATUS: PASS' && !/STATUS:\s*FAIL\b/.test(text));
     }
     reviewStatus = finalReviews.every(Boolean) ? 'PASS' : 'FAIL';

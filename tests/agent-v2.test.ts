@@ -46,12 +46,37 @@ test('V2 stage order, sandboxes, independent reviews, reports and baseline attri
   assert.match(codex[5].args[3], /code-review-private-marker/);
   assert.match(codex[5].args[3], /security-review-private-marker/);
   assert.match(codex[5].args[3], /ui-review-private-marker/);
+  for (const review of [...codex.slice(2, 5), ...codex.slice(6, 9)]) {
+    assert.match(review.args[3], /do not run npm tests, lint, typecheck, Expo build, Docker/i);
+    assert.match(review.args[3], /Tester and DevOps stages/i);
+  }
   assert.deepEqual(calls.filter((c) => c.command === 'npm').map((c) => c.args), [['test'], ['run', 'lint'], ['run', 'typecheck'], ['run', 'build']]);
   assert.equal(calls.filter((c) => c.command === 'docker').length, 1);
   for (const stage of [...v2.STAGES, 'SUMMARY']) assert.ok((await readFile(join(root, result.runDir, stage + '.md'), 'utf8')).length);
   const summary = await readFile(join(root, result.runDir, 'SUMMARY.md'), 'utf8');
   assert.match(summary, /Changed during this invocation.*existing.ts/s);
   assert.match(summary, /Preexisting dirty files/);
+});
+
+test('final read-only review does not replace deterministic validation gates', async (t) => {
+  const root = await fixture(t);
+  const { runner, calls } = fake(root);
+  const result = await v2.runV2('Update documentation and run tests, build and Docker', {
+    root,
+    runner: async (command: string, args: string[], options: Call['options']) => {
+      const output = await runner(command, args, options);
+      if (command === 'codex' && args[3].includes('FINAL UI REVIEW:')) {
+        return { code: 0, stdout: 'No source-level UI findings. Build/test/Docker not executed inside reviewer sandbox.\nSTATUS: PASS' };
+      }
+      return output;
+    },
+  });
+  assert.equal(result.validation.review, 'PASS');
+  assert.equal(result.validation.tests, 'PASS');
+  assert.equal(result.validation.docker, 'PASS');
+  assert.equal(result.status, 'PASS');
+  assert.equal(calls.filter((call) => call.command === 'npm').length, 4);
+  assert.equal(calls.filter((call) => call.command === 'docker').length, 2);
 });
 
 for (const failStage of ['planner', 'developer']) {
