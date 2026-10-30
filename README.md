@@ -56,12 +56,15 @@ Use HTTPS on a public deployment for browser geolocation. Browsers also allow
 geolocation on localhost. The static app requests weather directly from the
 public APIs, so clients need internet access to those endpoints.
 
-## Smart Outdoor Planner
+## Weather Intelligence V3 — Smart Outdoor Planner
 
 Choose Walking, Running, or Photography and 1–3 consecutive hours. The planner
-ranks up to three future windows within the existing 24 hourly samples. Overlaps
-are allowed. Every sample must have a unique Unix timestamp, exact one-hour
-adjacency, and valid temperature, precipitation probability, wind and WMO code.
+ranks up to three distinct, non-overlapping future windows within the existing 24
+hourly samples. Activity and daylight eligibility filters run before selection.
+Candidates are greedily selected in descending unrounded score order, with
+earliest-start tie-breaking; touching endpoints are allowed. Fewer than three
+results are shown when fewer distinct eligible windows exist. Every sample must
+have a unique Unix timestamp, exact one-hour adjacency, and valid temperature, precipitation probability, wind and WMO code.
 Each sample represents the following hour, including the last sample. Ranking
 uses unrounded scores, with earliest start breaking ties.
 
@@ -77,7 +80,9 @@ range and loses 10% of that weight per degree outside it. Precipitation earns
 speed and loses 5% of that weight per extra km/h. Factors stop at zero; window
 scores average hourly contributions and range from 0 to 100. The UI shows actual
 forecast ranges/maxima and each factor's contribution. Suitability is neither a
-probability nor a safety guarantee; photography lighting is not assessed.
+probability nor a safety guarantee. Photography always uses the label **Weather
+conditions score**, not overall photography suitability. Light quality, visibility,
+and night-photography suitability are not assessed, even for a score of 100.
 
 The existing public [Open-Meteo forecast request](https://open-meteo.com/en/docs)
 includes hourly wind at 10 m and daily sunrise/sunset. Missing or invalid additions
@@ -87,13 +92,26 @@ thunderstorms, unknown codes, temperatures ≤−20°C or ≥40°C, and wind ≥
 exclude affected windows. Other hazards, including gusts, UV and alerts, are not
 scored.
 
+Photography defaults to **Daylight photos**; **Any time** allows eligible night
+windows and windows with unverified solar data, with explicit daylight status.
+Daylight photos includes only intervals satisfying `sunrise ≤ start < end ≤ sunset`
+within one reliable destination-date solar record. Absent, malformed, conflicting,
+duplicate, mismatched-date, or incomplete coverage cannot certify daylight and is
+omitted from daylight-only results. The UI explains this filter and offers refresh,
+a different city/duration, or Any time when no verified window is available.
+
 A full interval is labeled as between sunrise and sunset only when both endpoints
 fit within one valid solar pair for the destination-local date. Hourly `isDay`
 flags never establish full-window daylight. Polar, absent or invalid solar data
 retain explicit uncertainty; intervals crossing sunset or sunrise are labeled as
-including time outside sunrise–sunset. Daylight does not change the score.
+including time outside sunrise–sunset when coverage is reliable, otherwise as
+unverified. Daylight controls eligibility, never the numerical weather score.
+Walking and Running retain their scoring and eligibility rules with the same
+non-overlapping selection improvement.
 
-Calculations use Unix seconds across DST changes. Both endpoints display the
+Daily aggregation dates use the service's fixed UTC offset before comparison with
+destination-local solar dates, so DST transitions do not create competing records.
+Window and solar calculations use Unix seconds across DST changes. Both endpoints display the
 destination-local date, time and UTC offset. Recommendations expire at their
 start boundary and recalculate on selection, forecast changes, foreground/focus
 restoration and periodic clock checks. City changes remount the planner; forecast

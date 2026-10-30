@@ -1,5 +1,5 @@
 import { outdoorAllowedCodes, outdoorDurations, outdoorHourSeconds, outdoorProfiles } from '../constants/outdoor.ts';
-import type { OutdoorActivity, OutdoorDuration, OutdoorScore, OutdoorWindow } from '../types/outdoor.ts';
+import type { OutdoorActivity, OutdoorDuration, OutdoorScore, OutdoorWindow, PhotographyPreference } from '../types/outdoor.ts';
 import type { DayForecast, HourForecast } from '../types/weather.ts';
 
 function validTime(value: number): boolean {
@@ -28,18 +28,25 @@ function dateKey(time: number, timezone: string): string {
 
 // isDay describes a sample instant only. Never use it to certify a full interval.
 // Polar, missing, reversed, conflicting or implausibly long solar pairs fail closed.
-export function windowDaylight(start: number, end: number, days: readonly DayForecast[], timezone: string): OutdoorWindow['daylight'] {
-  if (!validTime(start) || !validTime(end) || end <= start) return 'unverified';
+export function windowDaylight(start: number, end: number, days: readonly DayForecast[], timezone: string,
+  utcOffsetSeconds: number): OutdoorWindow['daylight'] {
+  if (!validTime(start) || !validTime(end) || end <= start
+    || !Number.isInteger(utcOffsetSeconds) || Math.abs(utcOffsetSeconds) > 86400) return 'unverified';
   try {
     const date = dateKey(start, timezone);
-    const pairs = days.filter((day) => {
-      const { sunrise: rise, sunset: set } = day;
-      return typeof rise === 'number' && typeof set === 'number' && validTime(rise) && validTime(set)
-        && rise > 0 && set > rise && set - rise < 86400
-        && dateKey(rise, timezone) === date && dateKey(set, timezone) === date;
-    });
+    if (dateKey(end, timezone) !== date || days.some((day) => !validTime(day.time))) return 'unverified';
+    // Daily aggregation dates use the service's fixed offset, even across DST.
+    // Solar and window instants use the destination's IANA timezone instead.
+    const dailyDate = (time: number) => dateKey(time + utcOffsetSeconds, 'UTC');
+    // Include malformed competing records rather than silently ignoring them.
+    const pairs = days.filter((day) => dailyDate(day.time) === date || [day.sunrise, day.sunset].some((time) =>
+      typeof time === 'number' && validTime(time) && dateKey(time, timezone) === date));
     if (pairs.length !== 1) return 'unverified';
-    return start >= pairs[0].sunrise! && end <= pairs[0].sunset! ? 'daylight' : 'outside';
+    const { time, sunrise: rise, sunset: set } = pairs[0];
+    if (typeof rise !== 'number' || typeof set !== 'number' || !validTime(rise) || !validTime(set)
+      || rise <= 0 || set <= rise || set - rise >= 86400
+      || dailyDate(time) !== date || [rise, set].some((value) => dateKey(value, timezone) !== date)) return 'unverified';
+    return start >= rise && end <= set ? 'daylight' : 'outside';
   } catch { return 'unverified'; }
 }
 
@@ -51,10 +58,11 @@ export function daylightLabel(daylight: OutdoorWindow['daylight']): string {
 
 // All comparisons use elapsed Unix seconds, including DST repeats/skips. Samples
 // represent [time, time + 1h), so the last sample can support one final hour.
-// Overlapping windows are eligible. Average components, rank with unrounded totals,
-// break ties by earliest start, and return at most three without mutating input.
+// Filter before ranking by unrounded totals and earliest start. Greedily accept
+// up to three non-overlapping intervals; touching endpoints are allowed.
 export function rankOutdoorWindows(hours: readonly HourForecast[], days: readonly DayForecast[], timezone: string,
-  activity: OutdoorActivity, duration: OutdoorDuration, now: number): OutdoorWindow[] {
+  activity: OutdoorActivity, duration: OutdoorDuration, now: number, utcOffsetSeconds: number,
+  photographyPreference: PhotographyPreference = 'Daylight photos'): OutdoorWindow[] {
   if (!outdoorDurations.includes(duration) || !Number.isFinite(now)) return [];
   const sorted = [...hours].sort((a, b) => a.time - b.time);
   const counts = new Map<number, number>();
@@ -73,14 +81,21 @@ export function rankOutdoorWindows(hours: readonly HourForecast[], days: readonl
     const wind = average('wind');
     const end = start + duration * outdoorHourSeconds;
     if (!validTime(end)) continue;
+    const daylight = windowDaylight(start, end, days, timezone, utcOffsetSeconds);
+    if (activity === 'Photography' && photographyPreference !== 'Any time' && daylight !== 'daylight') continue;
     windows.push({ start, end, score: { temperature, precipitation, wind, total: Math.min(100, temperature + precipitation + wind) },
       temperatureMin: Math.min(...sample.map((hour) => hour.temperature!)),
       temperatureMax: Math.max(...sample.map((hour) => hour.temperature!)),
       precipitationMax: Math.max(...sample.map((hour) => hour.precipitationProbability!)),
       windMin: Math.min(...sample.map((hour) => hour.windSpeed!)), windMax: Math.max(...sample.map((hour) => hour.windSpeed!)),
-      daylight: windowDaylight(start, end, days, timezone) });
+      daylight });
   }
-  return windows.sort((a, b) => b.score.total - a.score.total || a.start - b.start).slice(0, 3);
+  const selected: OutdoorWindow[] = [];
+  for (const candidate of windows.sort((a, b) => b.score.total - a.score.total || a.start - b.start)) {
+    if (selected.every((other) => candidate.end <= other.start || candidate.start >= other.end)) selected.push(candidate);
+    if (selected.length === 3) break;
+  }
+  return selected;
 }
 
 export function formatOutdoorWindow(window: Pick<OutdoorWindow, 'start' | 'end'>, timezone: string): string {
