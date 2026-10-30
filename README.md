@@ -229,3 +229,109 @@ browser. These remain release smoke checks, rather than validated results here.
 V2 and the optional V3 dashboard run separately from Expo. See
 [agent-platform/README.md](agent-platform/README.md) for architecture, safety,
 configuration, validation, and commands. Use Node 24 and the existing dependencies.
+
+## Agent Quality Lab V4 (optional, advisory)
+
+From this isolated repository worktree, using the existing Node 24 installation:
+
+```sh
+node scripts/qa-visual.ts --url http://127.0.0.1:8081 --out .qa-artifacts/weather-check
+```
+
+`--url` is required. Only HTTP(S) origins using exactly `127.0.0.1`, `localhost`,
+or `[::1]` are accepted. Credentials, non-root paths, queries and fragments are
+rejected, including token-bearing URLs. The URL records the intended app target;
+V4 does **not** request it, verify that it is running, start Expo, or change an
+existing server. No public API, cloud service or installation is used.
+
+`--out` is optional; omitting it generates a timestamp/UUID run name under
+`.qa-artifacts/`. An explicit output must be `.qa-artifacts/<new-run-name>` with
+1–80 letters, digits, hyphens or underscores, starting with a letter or digit.
+Absolute paths, nested paths, traversal, symlinks and existing run directories
+are rejected. The root comes from the CLI file location, independently of the
+shell's working directory. Run directories use mode 0700 and reports 0600;
+each report is bounded to 256 KiB. Run without concurrent directory replacement
+by other processes. A write failure can leave a partial run: inspect it locally
+and choose a new run name. The runner never overwrites or removes an earlier run.
+
+The CLI prints the three category outcomes and writes `report.json` and
+`report.md` in that directory. Open the Markdown report for the check list and
+limitations; inspect the JSON for each scenario's fixed input, exact expectation,
+observed result, production source and existing-test reference. Reports include
+UTC timestamp, current HEAD, dirty-state metadata (without file contents or
+filenames), and executed commands. A dirty worktree means evidence includes
+uncommitted source and is not certification of HEAD alone. Git commands have
+5-second timeouts and 64 KiB output bounds; unavailable metadata is explicit.
+
+The categories are independent:
+
+| Category | V4 evidence and outcome |
+| --- | --- |
+| A. Deterministic scenario audit | Executes `src/utils/outdoor.ts` with shared `tests/fixtures/outdoor.ts` fixtures. `PASS` or `FAIL` from actual expected/observed comparisons. |
+| B. Real browser visual checks | `UNAVAILABLE`. No screenshots, heading/label inspection, overflow measurements or control clicks are claimed. Desktop 1440 × 900 and mobile 390 × 844 remain planned checks. |
+| C. Manual native-device checks | `NOT_RUN`. The report contains a physical-device checklist; browser or utility results cannot satisfy it. |
+
+The scenario audit covers verified daylight, sunrise/sunset crossings, unknown
+solar data, all-night Photography **Any time**, **Daylight photos** with **3 hours**,
+non-overlap and touching endpoints, earliest tie breaking and unrounded ranking,
+missing wind, invalid measurements/duplicates, insufficient samples, fewer than
+three windows, Tokyo destination dates and both New York DST transitions. Scoring
+and selection call production functions; there is no second scoring algorithm.
+The independently expected numeric score observation rounds to 10 decimal places
+to avoid floating-point noise. Individual scenario IDs and source-test names are
+recorded so results can be independently checked against `tests/outdoor.test.ts`.
+
+Illustrative excerpt only (not an executed result or complete schema):
+
+```json
+{
+  "schemaVersion": 1,
+  "advisory": true,
+  "deterministicScenarios": {
+    "status": "PASS",
+    "checks": [{ "id": "verified-full-daylight", "status": "PASS", "expected": "daylight", "observed": "daylight" }]
+  },
+  "browserVisual": { "status": "UNAVAILABLE" },
+  "manualNative": { "status": "NOT_RUN" }
+}
+```
+
+An actual report lists all executed scenarios; an empty audit is `FAIL`.
+There is no combined overall PASS. Exit 0 means deterministic scenarios passed;
+it does **not** mean visual QA passed. Exit 1 means scenario failure; exit 2 means
+invalid invocation or runner/report failure. Failure issues include severity and
+reproduction steps; missing tools and unexecuted checks are limitations, not
+fabricated UI defects. Raw OS/Git exception text, credentials, private agent logs,
+memory, app storage and environment dumps are not copied into reports.
+
+Browser capability detection only resolves existing Playwright/Puppeteer package
+names and checks PATH/standard macOS browser executable locations. No compatible
+package or browser was found during implementation inspection. No adapter is
+included: if tooling later becomes resolvable, V4 still reports `UNAVAILABLE`
+until a reviewed adapter exists. It never launches an arbitrary discovered tool.
+
+True browser capture is a **separate permission-requiring follow-up**: provide a
+compatible local package/browser, review an adapter with bounded timeouts and
+cleanup, block external traffic/redirects/popups/service workers/downloads, and
+serve deterministic Weather fixtures without altering the live app or its data.
+Then capture actual desktop/mobile screenshots and observed headings, accessible
+labels, overflow, and selected Photography → Daylight photos → 3 hours → Any time
+states. The app normally fetches public weather APIs, so merely launching a
+browser would not meet V4's offline constraints. Fixture-backed evidence must be
+labeled separately from live-data checks. No package or browser is installed by
+this implementation.
+
+`.qa-artifacts/` is excluded from Git, Docker context and ESLint. Keep reports and
+any future genuine screenshots local; inspect them before sharing. The runner
+does not import the platform, access its runtime data, call mutation endpoints,
+or change Dashboard controls, execution validators, human checkpoint approval,
+merge eligibility, retries, pushes or deployments. Gate integration is deferred
+until the user has tested this advisory runner and explicitly approves a later
+task. Existing validation remains mandatory in the platform.
+
+Focused regression coverage lives in `tests/qa-visual.test.ts` and runs with
+the existing `npm test` command (or `node --test tests/qa-visual.test.ts`). It
+checks scenario results, failure handling, report semantics, URL/path restrictions,
+missing tooling, local evidence writing and the real platform gate/approval
+functions. Implementation-stage validation results are reported separately;
+example reports and past README verification are not current execution evidence.

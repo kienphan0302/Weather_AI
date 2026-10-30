@@ -3,5 +3,5 @@ const expoConfig = require('eslint-config-expo/flat');
 
 module.exports = defineConfig([
   expoConfig,
-  { ignores: ['dist/**', '.expo/**', 'ios/**', 'android/**', '.agent-worktrees/**', '.agent-data/**', 'harness/runs/**'] },
+  { ignores: ['dist/**', '.expo/**', 'ios/**', 'android/**', '.agent-worktrees/**', '.agent-data/**', 'harness/runs/**', '.qa-artifacts/**'] },
 ]);

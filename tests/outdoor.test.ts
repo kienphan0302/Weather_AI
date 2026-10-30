@@ -5,17 +5,9 @@ import { outdoorActivities, outdoorProfiles } from '../src/constants/outdoor.ts'
 import { parseWeather } from '../src/services/weather.ts';
 import type { OutdoorDuration } from '../src/types/outdoor.ts';
 import type { DayForecast, HourForecast } from '../src/types/weather.ts';
+import { day, hour, hours, start, unix } from './fixtures/outdoor.ts';
 import { daylightLabel, formatOutdoorWindow, rankOutdoorWindows, scoreOutdoorHour, windowDaylight } from '../src/utils/outdoor.ts';
 
-const unix = (iso: string) => Date.parse(iso) / 1000;
-const start = unix('2026-10-30T10:00:00Z');
-const hour = (time = start, fields: Partial<HourForecast> = {}): HourForecast => ({ time, temperature: 18,
-  precipitationProbability: 0, windSpeed: 5, code: 0, isDay: true, ...fields });
-const hours = (count = 5) => Array.from({ length: count }, (_, i) => hour(start + i * 3600));
-const day = (rise = '2026-10-30T06:00:00Z', set = '2026-10-30T18:00:00Z'): DayForecast => ({
-  time: unix('2026-10-30T00:00:00Z'), min: 12, max: 25, code: 0, precipitationProbability: 0,
-  sunrise: unix(rise), sunset: unix(set),
-});
 const rank = (input: HourForecast[], duration: OutdoorDuration = 1, now = start - 1) =>
   rankOutdoorWindows(input, [day()], 'UTC', 'Walking', duration, now, 0);
 

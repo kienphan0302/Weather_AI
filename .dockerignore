@@ -18,3 +18,4 @@ harness/runs
 
 # Isolated task checkouts and their independent dependencies
 .agent-worktrees/
+.qa-artifacts/
