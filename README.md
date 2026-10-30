@@ -56,6 +56,50 @@ Use HTTPS on a public deployment for browser geolocation. Browsers also allow
 geolocation on localhost. The static app requests weather directly from the
 public APIs, so clients need internet access to those endpoints.
 
+## Smart Outdoor Planner
+
+Choose Walking, Running, or Photography and 1–3 consecutive hours. The planner
+ranks up to three future windows within the existing 24 hourly samples. Overlaps
+are allowed. Every sample must have a unique Unix timestamp, exact one-hour
+adjacency, and valid temperature, precipitation probability, wind and WMO code.
+Each sample represents the following hour, including the last sample. Ranking
+uses unrounded scores, with earliest start breaking ties.
+
+| Activity | Comfortable °C | Comfortable wind (km/h) | Temperature / precipitation / wind points |
+| --- | --- | --- | --- |
+| Walking | 15–25 | ≤15 | 40 / 40 / 20 |
+| Running | 8–18 | ≤12 | 50 / 30 / 20 |
+| Photography | 10–24 | ≤8 | 25 / 40 / 35 |
+
+These are product heuristics. Temperature earns its weight within the comfort
+range and loses 10% of that weight per degree outside it. Precipitation earns
+`weight × (1 − hourly probability / 100)`. Wind earns its weight up to the comfort
+speed and loses 5% of that weight per extra km/h. Factors stop at zero; window
+scores average hourly contributions and range from 0 to 100. The UI shows actual
+forecast ranges/maxima and each factor's contribution. Suitability is neither a
+probability nor a safety guarantee; photography lighting is not assessed.
+
+The existing public [Open-Meteo forecast request](https://open-meteo.com/en/docs)
+includes hourly wind at 10 m and daily sunrise/sunset. Missing or invalid additions
+remain null, preserving the rest of the dashboard. Missing wind excludes affected
+windows and is disclosed. Freezing precipitation, heavy rain/snow/showers,
+thunderstorms, unknown codes, temperatures ≤−20°C or ≥40°C, and wind ≥50 km/h
+exclude affected windows. Other hazards, including gusts, UV and alerts, are not
+scored.
+
+A full interval is labeled as between sunrise and sunset only when both endpoints
+fit within one valid solar pair for the destination-local date. Hourly `isDay`
+flags never establish full-window daylight. Polar, absent or invalid solar data
+retain explicit uncertainty; intervals crossing sunset or sunrise are labeled as
+including time outside sunrise–sunset. Daylight does not change the score.
+
+Calculations use Unix seconds across DST changes. Both endpoints display the
+destination-local date, time and UTC offset. Recommendations expire at their
+start boundary and recalculate on selection, forecast changes, foreground/focus
+restoration and periodic clock checks. City changes remount the planner; forecast
+loading, retry and refresh use the existing screen behavior. Hourly samples
+approximate conditions, and stale forecasts still need refreshing.
+
 ## Features and behavior
 
 - London is the initial city. Search a city or postal code (at least two

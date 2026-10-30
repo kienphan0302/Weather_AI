@@ -113,6 +113,9 @@ test('constructs forecast requests with explicit units, timezone and unix timest
     assert.equal(parsed.searchParams.get('timeformat'), 'unixtime');
     assert.equal(parsed.searchParams.get('forecast_days'), '7');
     assert.equal(parsed.searchParams.get('wind_speed_unit'), 'kmh');
+    assert.ok(parsed.searchParams.get('hourly')?.split(',').includes('wind_speed_10m'));
+    assert.ok(parsed.searchParams.get('daily')?.split(',').includes('sunrise'));
+    assert.ok(parsed.searchParams.get('daily')?.split(',').includes('sunset'));
     assert.equal(parsed.searchParams.get('temperature_unit'), 'celsius');
     return Response.json(fixture());
   });
@@ -213,4 +216,36 @@ test('times out stalled requests without leaving an unbounded fetch', async (t) 
   const pending = fetchWeather(city);
   t.mock.timers.tick(15000);
   await assert.rejects(pending, /timed out/);
+});
+
+
+test('normalizes optional hourly wind and solar Unix instants without breaking old responses', () => {
+  const input = fixture();
+  const wind: (number | null)[] = input.hourly.time.map(() => 12.5);
+  const rises: (number | null)[] = input.daily.time.map((time) => time + 6 * 3600);
+  const sets = input.daily.time.map((time) => time + 18 * 3600);
+  Object.assign(input.hourly, { wind_speed_10m: wind });
+  Object.assign(input.daily, { sunrise: rises, sunset: sets });
+  let weather = parseWeather(input);
+  assert.equal(weather.hours[0].windSpeed, 12.5);
+  assert.equal(weather.days[0].sunrise, rises[0]);
+  assert.equal(weather.days[0].sunset, sets[0]);
+  wind[5] = -2;
+  wind[6] = null;
+  wind[7] = Infinity;
+  rises[0] = NaN;
+  sets[1] = 1.5;
+  weather = parseWeather(input);
+  assert.deepEqual(weather.hours.slice(0, 3).map((hour) => hour.windSpeed), [null, null, null]);
+  assert.equal(weather.days[0].sunrise, null);
+  assert.equal(weather.days[1].sunset, null);
+  wind.pop();
+  sets.pop();
+  weather = parseWeather(input);
+  assert.ok(weather.hours.every((hour) => hour.windSpeed === null));
+  assert.ok(weather.days.every((day) => day.sunset === null));
+  const legacy = parseWeather(fixture());
+  assert.equal(legacy.hours[0].windSpeed, null);
+  assert.equal(legacy.days[0].sunrise, null);
+  assert.equal(legacy.days[0].sunset, null);
 });

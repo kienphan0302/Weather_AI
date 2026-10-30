@@ -9,6 +9,7 @@ export type City = {
 
 export type HourForecast = {
   time: number;
+  windSpeed?: number | null;
   temperature: number | null;
   precipitationProbability: number | null;
   code: number | null;
@@ -17,6 +18,8 @@ export type HourForecast = {
 
 export type DayForecast = {
   time: number;
+  sunrise?: number | null;
+  sunset?: number | null;
   min: number | null;
   max: number | null;
   code: number | null;

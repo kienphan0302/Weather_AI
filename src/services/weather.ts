@@ -16,6 +16,11 @@ function finite(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function nonnegative(value: unknown): number | null {
+  const result = finite(value);
+  return result !== null && result >= 0 ? result : null;
+}
+
 function requiredNumber(value: unknown): number {
   const result = finite(value);
   if (result === null) throw new Error(INVALID_RESPONSE);
@@ -49,6 +54,17 @@ function percentage(value: unknown): number | null {
   return number !== null && number >= 0 && number <= 100 ? number : null;
 }
 
+// Optional additions must not make the existing forecast unavailable. A misaligned
+// array is discarded in full so measurements cannot be attached to the wrong hour.
+function optionalArray(group: JsonObject, key: string, length: number): unknown[] {
+  const value = group[key];
+  return Array.isArray(value) && value.length === length ? value : [];
+}
+
+function optionalTimestamp(value: unknown): number | null {
+  try { return timestamp(value); } catch { return null; }
+}
+
 export function parseWeather(input: unknown): Weather {
   const body = object(input);
   const current = object(body.current);
@@ -68,6 +84,7 @@ export function parseWeather(input: unknown): Weather {
   const hourRain = array(hourly, 'precipitation_probability', times.length);
   const hourCodes = array(hourly, 'weather_code', times.length);
   const hourDay = array(hourly, 'is_day', times.length);
+  const hourWind = optionalArray(hourly, 'wind_speed_10m', times.length);
   // Unix timestamps avoid interpreting a destination's local time in the browser's timezone.
   const currentIndex = times.findIndex((time, i) => time <= observedAt && (times[i + 1] ?? Infinity) > observedAt);
   if (currentIndex < 0 || times.length - currentIndex < 24) throw new Error(INVALID_RESPONSE);
@@ -77,6 +94,8 @@ export function parseWeather(input: unknown): Weather {
   const dayMax = array(daily, 'temperature_2m_max', dayTimes.length);
   const dayCodes = array(daily, 'weather_code', dayTimes.length);
   const dayRain = array(daily, 'precipitation_probability_max', dayTimes.length);
+  const sunrises = optionalArray(daily, 'sunrise', dayTimes.length);
+  const sunsets = optionalArray(daily, 'sunset', dayTimes.length);
   return {
     timezone: body.timezone,
     utcOffsetSeconds,
@@ -91,6 +110,7 @@ export function parseWeather(input: unknown): Weather {
     precipitationProbability: percentage(hourRain[currentIndex]),
     hours: times.slice(currentIndex, currentIndex + 24).map((time, index) => ({
       time,
+      windSpeed: nonnegative(hourWind[currentIndex + index]),
       temperature: finite(hourTemps[currentIndex + index]),
       precipitationProbability: percentage(hourRain[currentIndex + index]),
       code: finite(hourCodes[currentIndex + index]),
@@ -98,6 +118,8 @@ export function parseWeather(input: unknown): Weather {
     })),
     days: dayTimes.slice(0, 7).map((time, index) => ({
       time,
+      sunrise: optionalTimestamp(sunrises[index]),
+      sunset: optionalTimestamp(sunsets[index]),
       min: finite(dayMin[index]),
       max: finite(dayMax[index]),
       code: finite(dayCodes[index]),
@@ -157,8 +179,8 @@ export async function fetchWeather(city: City, signal?: AbortSignal): Promise<We
     latitude: String(city.latitude),
     longitude: String(city.longitude),
     current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m',
-    hourly: 'temperature_2m,precipitation_probability,weather_code,is_day',
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    hourly: 'temperature_2m,precipitation_probability,weather_code,is_day,wind_speed_10m',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset',
     timezone: 'auto',
     timeformat: 'unixtime',
     forecast_days: '7',

@@ -1,5 +1,6 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { OutdoorPlanner } from '@/components/OutdoorPlanner';
 import { colors } from '@/constants/colors';
 import type { City, Weather } from '@/types/weather';
 import { forecastDay, localTime, measurement, temperature, weatherCondition } from '@/utils/weather';
@@ -56,6 +57,8 @@ export function WeatherDashboard({ weather, city, wide, compact }: Props) {
           <Metric label="Chance of rain" value={measurement(weather.precipitationProbability, '%')} note="This hour · rain or snow" symbol="☂" />
         </View>
       </View>
+
+      <OutdoorPlanner key={`${city.latitude},${city.longitude}`} weather={weather} />
 
       <View style={styles.card}>
         <View style={styles.sectionHeading}>
