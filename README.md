@@ -335,3 +335,163 @@ checks scenario results, failure handling, report semantics, URL/path restrictio
 missing tooling, local evidence writing and the real platform gate/approval
 functions. Implementation-stage validation results are reported separately;
 example reports and past README verification are not current execution evidence.
+
+## Safari Autonomous Visual QA V5 (optional, advisory)
+
+V5 is a separate, opt-in live browser extension of V4.1. V4's CLI, schema,
+26 deterministic scenarios, offline policy and advisory behavior are unchanged.
+V5 uses only Node 24 built-ins and Safari's W3C WebDriver HTTP API. No Selenium,
+Playwright, Puppeteer, package installation, downloaded binary or credentials are
+needed. V5 does not affect merge eligibility or trigger any task, approval,
+retry, push, merge or deployment. Existing mandatory tests, final code/security/UI
+reviews, Docker checks, checkpoint approval and manual Merge remain intact.
+
+### A. Authoring in the isolated task worktree
+
+Implement and statically review QA scripts/tests/documentation here. Deterministic
+validation belongs to the later Tester and DevOps phases: no past report or memory
+is current validation evidence. Focused commands for that phase are:
+
+```sh
+node --test tests/qa-safari.test.ts tests/qa-visual.test.ts
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+The platform's normal DevOps phase inspects `Dockerfile`, `nginx.conf` and
+`.dockerignore`, then runs `docker info` and, when available,
+`docker build -t weather-agent-web:<checkpoint-sha> .`. These checks and independent
+final reviews are still required; V5 cannot satisfy or bypass them.
+
+Mock tests inject the WebDriver transport. Their reports say `MOCK`, their browser
+status is `UNAVAILABLE`, and synthetic screenshot bytes are never written as PNG
+files. Tests require no GUI, Expo server, Safari permission, public internet or
+WebDriver service. Reports are written only into disposable test worktree fixtures.
+No real Safari evidence is claimed during isolated authoring without an authorized,
+interactive browser environment. Real browser checks otherwise remain
+`UNAVAILABLE`/`NOT_RUN`. This implementation phase does not launch Safari or services.
+
+To exercise refusal safely, without any app/driver network requests, the optional
+CLI can be invoked **without** consent (use a fresh name):
+
+```sh
+node scripts/qa-safari.ts --url http://127.0.0.1:8081 --driver http://127.0.0.1:4444 --out .qa-artifacts/safari-no-consent
+```
+
+This writes an `UNAVAILABLE` report and exits 2. Invalid invocation or an unsafe
+output path exits 2 without echoing raw arguments/errors; a writable output may
+not exist in that case. Invocation errors therefore cannot always create a report.
+
+### B. Real browser run on the user's Mac after user-approved Merge
+
+Only run after the user explicitly permits live Safari testing. In the merged
+repository on an interactive macOS host, the user starts the existing services
+separately. If Expo is already running at the supplied origin, reuse it. Otherwise,
+in one terminal:
+
+```sh
+npm start -- --web --host localhost --port 8081
+```
+
+In Safari, manually enable **Develop → Allow Remote Automation** if necessary.
+If the Develop menu is hidden, expose developer features through Safari Settings
+(the wording varies by Safari version). The runner never enables this setting,
+changes OS security settings, requests a password, or executes
+`safaridriver --enable`. If macOS requires separate administrator authorization,
+resolve it manually outside this runner, or leave browser testing unavailable.
+
+In a second terminal, start the already installed driver in the foreground:
+
+```sh
+/usr/bin/safaridriver --port 4444
+```
+
+Then, from the merged repository in a third terminal, explicitly consent to the
+Weather application's live public provider traffic:
+
+```sh
+node scripts/qa-safari.ts --url http://127.0.0.1:8081 --driver http://127.0.0.1:4444 --out .qa-artifacts/safari-v5-run --allow-live-app-network
+```
+
+Both URL options are required and accept only exact `http://127.0.0.1:<port>`,
+`http://localhost:<port>` or `http://[::1]:<port>` origins, optionally ending in `/`,
+with explicit ports 1024–65535. No credentials, non-root paths, queries, fragments,
+HTTPS, remote hosts or ambiguous encodings are accepted. Use the actual ports of
+the user-started services. The runner never starts/stops Expo, Agent Server,
+Docker or safaridriver, and never launches a driver in an isolated sandbox.
+
+For teardown, the runner deletes **only its own returned session ID** in `finally`,
+with a separate 3-second bound. Stop only services you started, using **Ctrl-C** in
+those foreground terminals. Leave previously running services alone. Do not kill
+other users' processes or sessions. If creation timed out before an ID arrived,
+an orphan automation window may need manual inspection: the runner cannot safely
+identify it. Cleanup failures are reported, never repaired by killing processes.
+Do not interrupt the runner unnecessarily: normal errors/timeouts reach `finally`,
+but force termination, crashes or host shutdown cannot guarantee cleanup.
+
+### Evidence and limitations
+
+V5 opens a fresh Safari automation session, requests outer windows 1440 × 900 and
+390 × 844, then observes the app and selects only **Photography → Daylight photos
+→ 3 hours → Any time** in each pass. It navigates only to the supplied app root;
+it never clicks attribution links, search, location, refresh, forms or arbitrary
+page-provided actions, and never reads browser storage, cookies or profiles.
+Each pass navigates anew so transient planner choices start from app defaults.
+Final URL checks occur before observations/actions/captures and after captures.
+Unexpected redirects stop interactions, produce `FAIL` for real execution, and
+omit unsafe raw URL contents. Safari cannot guarantee blocking browser redirects
+or remote application subrequests; URL checks detect rather than intercept them.
+
+**This is a live-data run.** `--allow-live-app-network` is conspicuous consent for
+the Weather app potentially fetching its public weather providers. Safari
+WebDriver alone provides no request interception/blocking proof. V5 is not an
+offline deterministic screenshot adapter and does not relax V4's offline policy.
+No fixtures replace live forecasts. Empty or incomplete recommendations, missing
+controls and app errors are recorded honestly, with reproduction steps. No
+uncontrolled retries occur: UI readiness uses at most 20 observations, 500 ms apart;
+commands are bounded to 15 seconds, the browser run to 120 seconds, and cleanup to
+3 seconds beyond that. Driver HTTP redirects are rejected and JSON is capped at
+12 MiB. Session conflicts, authorization errors, absent servers and timeouts are
+unavailable prerequisites, not successful UI checks. Driver errors are sanitized;
+inspect the user-owned driver terminal locally for details if needed.
+
+The existing UI has `weather.` branding but **no exact accessible Weather heading**.
+V5 reports that mismatch as a failed observed check, while continuing the other
+reviewed checks. It does not change app design to manufacture a pass. It checks
+DOM roles/names, unique enabled controls, selected attributes and the full expected
+planner combination, a visible recommendation summary and first ranked card/score,
+alerts and page horizontal
+overflow. This is not a full accessibility audit or a visual pixel comparison.
+A genuine screenshot records appearance for human review; capturing alone is not
+proof of visual correctness.
+
+Reports record requested versus observed inner/outer dimensions, DPR, and actual
+PNG dimensions separately. Safari may constrain window sizes: **a requested
+390 × 844 window is not a verified 390 × 844 viewport**. Resizing desktop Safari
+is not native iOS testing; native checks always remain `NOT_RUN`.
+
+`report-safari.json` and `report-safari.md` include timestamp, target and observed
+safe URL, Git HEAD/dirty state, network consent, executed controls, individual
+statuses, screenshot paths/dimensions, cleanup outcome, issues/severity/reproduction
+and limitations. No private logs, environment dump, raw driver error messages,
+credentials or unexpected page text/URLs are copied. The standalone V5 schema
+has no effect on V4 reports or gates. Browser `PASS` requires every mandatory
+observation/capture plus successful cleanup; observed defects yield `FAIL`, while
+missing prerequisites yield `UNAVAILABLE`. Later states retain `NOT_RUN` when
+execution stops. Exit codes are 0 for a complete browser pass, 1 for an observed
+browser failure, and 2 for unavailable prerequisites, mock execution or runner/
+invocation failure. An observed defect can coexist with a later unavailable step;
+read individual results rather than treating an exit code as certification.
+
+At most ten genuine WebDriver PNG captures are saved, one per observed important
+state, including failed-but-observed states for diagnosis. Base64 must be canonical;
+PNG signature, chunk bounds/CRC, dimensions and terminator are validated. Each PNG
+is capped at 8 MiB and 8192 pixels per side/32 million total pixels. No simulated
+image is presented as real evidence. All files use exclusive creation under a new
+`.qa-artifacts/<safe-name>` directory with containment/symlink checks, directory
+mode 0700 and file mode 0600. Reports are capped at 256 KiB each. Run in a trusted
+worktree without concurrent directory replacement; partial output may remain on
+write failure, so choose a fresh name. Existing Git, Docker and ESLint ignores
+already exclude `.qa-artifacts/`. Keep captures local and review before sharing.
