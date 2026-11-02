@@ -24,7 +24,7 @@ export default function WeatherScreen() {
       <ScrollView contentContainerStyle={[styles.page, compact && styles.pageCompact]} keyboardShouldPersistTaps="handled">
         <View style={styles.content}>
           <View style={styles.header}>
-            <View style={styles.brand}><View style={styles.brandMark}><Text accessibilityElementsHidden importantForAccessibility="no" style={styles.brandIcon}>☀</Text></View><Text style={styles.brandName}>weather<Text style={styles.brandDot}>.</Text></Text></View>
+            <View accessible accessibilityRole="header" accessibilityLabel="Weather" style={styles.brand}><View style={styles.brandMark}><Text accessibilityElementsHidden importantForAccessibility="no" style={styles.brandIcon}>☀</Text></View><Text style={styles.brandName}>weather<Text style={styles.brandDot}>.</Text></Text></View>
             <Text style={styles.headerNote}>A clearer day ahead.</Text>
           </View>
           <View style={[styles.searchRow, compact && styles.searchRowCompact]}>

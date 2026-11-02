@@ -457,9 +457,9 @@ commands are bounded to 15 seconds, the browser run to 120 seconds, and cleanup 
 unavailable prerequisites, not successful UI checks. Driver errors are sanitized;
 inspect the user-owned driver terminal locally for details if needed.
 
-The existing UI has `weather.` branding but **no exact accessible Weather heading**.
-V5 reports that mismatch as a failed observed check, while continuing the other
-reviewed checks. It does not change app design to manufacture a pass. It checks
+The visible `weather.` brand group exposes a heading named exactly `Weather`
+in loading, success and error states, while retaining the city heading. V5's
+existing heading and branding checks remain unchanged. The runner checks
 DOM roles/names, unique enabled controls, selected attributes and the full expected
 planner combination, a visible recommendation summary and first ranked card/score,
 alerts and page horizontal
